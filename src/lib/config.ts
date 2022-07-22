@@ -7,6 +7,9 @@ import * as FS from 'fs-extra';
 import * as Yaml from 'js-yaml';
 import * as Globby from 'globby';
 import * as Path from 'path';
+import * as Minimatch from 'minimatch';
+
+import * as Toposort from 'toposort';
 
 import { exec } from './misc';
 
@@ -14,12 +17,14 @@ interface ConfigInitializer {
     name?: (config: Config) => string;
 }
 
-export type ActionSchema = ExecActionSchema | DelegateActionSchema | WatchActionSchema;
+export type ActionSchema = ExecActionSchema | DelegateActionSchema | WatchActionSchema | LocalDelegateActionSchema;
 export const ActionSchema: Zod.ZodType<ActionSchema> = Zod.lazy(() => Zod.discriminatedUnion('type', [
     ExecActionSchema,
     DelegateActionSchema,
-    WatchActionSchema
+    WatchActionSchema,
+    LocalDelegateActionSchema
 ]));
+
 export interface ExecActionSchema {
     type: 'exec';
     cmd: string;
@@ -28,18 +33,31 @@ export const ExecActionSchema = Zod.object({
     type: Zod.literal('exec'),
     cmd: Zod.string()
 });
+
+export interface LocalDelegateActionSchema {
+    type: 'delegate.local';
+    task: string;
+}
+export const LocalDelegateActionSchema = Zod.object({
+    type: Zod.literal('delegate.local'),
+    task: Zod.string()
+});
+
 export interface DelegateActionSchema {
     type: 'delegate';
+    dependencies?: Record<string, string[]>;
     included?: Record<string, string>;
     task: string;
     parallel?: boolean;
 }
 export const DelegateActionSchema = Zod.object({
     type: Zod.literal('delegate'),
+    dependencies: Zod.record(Zod.string(), Zod.string().array()).optional(),
     included: Zod.record(Zod.string(), Zod.string()).optional(),
     task: Zod.string(),
     parallel: Zod.boolean().optional(),
 });
+
 export interface WatchActionSchema {
     type: 'watch';
     patterns?: string[];
@@ -167,8 +185,9 @@ export class Config {
             });
             config.labels = {
                 ...config.labels,
-                ...matchedFiles[match]
-            }
+                ...matchedFiles[match],
+                'cohesion:pathspec': Path.relative(this.path ?? '.', config.path ?? '.').replace('\\', '/')
+            };
 
             yield config;
             for await (const peerConfig of config.resolveConfigs())
@@ -336,6 +355,8 @@ export abstract class AAction {
             return DelegateAction.fromSchema(value);
         else if (value.type === 'watch')
             return WatchAction.fromSchema(value);
+        else if (value.type === 'delegate.local')
+            return LocalDelegateAction.fromSchema(value);
         else
             throw new Error('Could not parse action schema');
     }
@@ -375,19 +396,52 @@ export class ExecAction extends AAction {
         await exec(this.cmd, {
             cwd: this.parentTask?.parentConfig?.path,
             stdout: process.stdout,
-            label: this.cmd
+            // label: this.cmd
         });
+    }
+}
+
+export interface LocalDelegateActionParams {
+    task: DelegateAction['task'];
+}
+export class LocalDelegateAction extends AAction {
+    public readonly type = 'delegate.local';
+    public task: string;
+
+    public static parse(value: unknown) {
+        return this.fromSchema(LocalDelegateActionSchema.parse(value));
+    }
+    public static fromSchema(value: Zod.infer<typeof LocalDelegateActionSchema>) {
+        return new LocalDelegateAction({
+            ...value
+        });
+    }
+
+    public constructor(params: LocalDelegateActionParams) {
+        super();
+
+        this.task = params.task;
+    }
+
+    public async exec() {
+        const parentConfig = this.parentTask?.parentConfig;
+        if (!parentConfig)
+            return;
+
+        await parentConfig.exec(this.task.split(' '));
     }
 }
 
 export interface DelegateActionParams {
     task: DelegateAction['task'];
+    dependencies?: DelegateAction['dependencies'];
     included?: DelegateAction['included'];
     parallel: DelegateAction['parallel'];
 }
 export class DelegateAction extends AAction {
     public readonly type = 'delegate';
     public task: string;
+    public dependencies: Record<string, string[]>
     public included: Record<string, string>;
     public parallel: boolean;
 
@@ -405,6 +459,7 @@ export class DelegateAction extends AAction {
         super();
 
         this.task = params.task;
+        this.dependencies = params.dependencies ?? {};
         this.included = params.included ?? {};
         this.parallel = params.parallel;
     }
@@ -414,19 +469,45 @@ export class DelegateAction extends AAction {
         if (!parentConfig)
             return;
 
+        let configs: Array<Config> = [];
+
         const execPromises = [];
         for await (const config of parentConfig.resolveConfigs()) {
             if (!_.isEmpty(this.included) && !_.some(this.included, (value, key) => config.labels[key] == value))
                 continue;
 
-            const execPromise = config.exec(this.task.split(' '));
-            execPromises.push(execPromise);
+            configs.push(config);
 
-            if (!this.parallel)
-                await execPromise;
+            // const execPromise = config.exec(this.task.split(' '));
+            // execPromises.push(execPromise);
+
+            // if (!this.parallel)
+            //     await execPromise;
         }
 
-        await Promise.all(execPromises);
+        if (!_.isEmpty(this.dependencies)) {
+            const pathspecs = configs.map(c => c.labels['cohesion:pathspec']);
+
+            const explodedDependencies: [string, string][] = [];
+            for (const key in this.dependencies) {
+                const keyMatches = pathspecs.filter(c => Minimatch(c, key));
+                const valueMatches = pathspecs.filter(c => this.dependencies[key].some(v => Minimatch(c, v)));
+    
+                for (const keyMatch of keyMatches)
+                    for (const valueMatch of valueMatches)
+                        explodedDependencies.push([ keyMatch, valueMatch ]);
+            }
+            // console.log(explodedDependencies)
+    
+            configs = Toposort(explodedDependencies).reverse().map(p => configs.find(c => c.labels['cohesion:pathspec'] === p) as Config);
+        }
+
+        if (this.parallel)
+            await Bluebird.map(configs, config => config.exec(this.task.split(' ')));
+        else
+            await Bluebird.mapSeries(configs, config => config.exec(this.task.split(' ')));
+
+        // await Promise.all(execPromises);
     }
 }
 
@@ -494,7 +575,7 @@ export class WatchAction extends AAction {
     }
 }
 
-export type Action = ExecAction | DelegateAction | WatchAction;
+export type Action = ExecAction | DelegateAction | WatchAction | LocalDelegateAction;
 
 export async function loadConfig(path: string, params: { parentConfig?: Config, initializer?: ConfigInitializer } = {}) {
     const resolvedPath = Path.resolve(path);

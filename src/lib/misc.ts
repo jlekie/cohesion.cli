@@ -24,16 +24,23 @@ export interface ExecOptions {
 }
 
 export async function exec(cmd: string, { cwd, stdout, dryRun, echo = true, label }: ExecOptions = {}) {
-    echo && stdout?.write(Chalk.gray(`${Chalk.cyan(cmd)} [${Path.resolve(cwd ?? '.')}]\n`));
+    echo && stdout?.write(Chalk.gray(`${Chalk.cyan.bold(cmd)} [${Path.resolve(cwd ?? '.')}]\n`));
 
     if (dryRun)
         return;
 
-    const proc = ChildProcess.spawn(cmd, { shell: true, cwd, env: _.omit(process.env, 'NODE_OPTIONS', 'INIT_CWD' , 'PROJECT_CWD', 'PWD', 'npm_package_name', 'npm_package_version', 'npm_config_user_agent', 'npm_execpath', 'npm_node_execpath', 'BERRY_BIN_FOLDER') });
+    const env = cmd.startsWith('yarn')
+        ? _.omit(process.env, 'NODE_OPTIONS', 'INIT_CWD' , 'PROJECT_CWD', 'PWD', 'npm_package_name', 'npm_package_version', 'npm_config_user_agent', 'npm_execpath', 'npm_node_execpath', 'BERRY_BIN_FOLDER')
+        : process.env;
+    // const env = process.env;
+    const proc = ChildProcess.spawn(cmd, { stdio: 'inherit', shell: true, cwd, env });
 
     return new Promise<void>((resolve, reject) => {
-        proc.stdout.on('data', d => stdout?.write(`${label ? Chalk.cyan('[' + label + ']') + ' ' : ''}${Chalk.gray(_.trimStart(d))}`));
-        proc.stderr.on('data', d => stdout?.write(`${label ? Chalk.cyan('[' + label + ']') + ' ' : ''}${Chalk.gray(_.trimStart(d))}`));
+        // proc.stdout.on('data', d => stdout?.write(`${label ? Chalk.cyan('[' + label + ']') + ' ' : ''}${Chalk.gray(_.trimStart(d))}`));
+        // proc.stderr.on('data', d => stdout?.write(`${label ? Chalk.cyan('[' + label + ']') + ' ' : ''}${Chalk.gray(_.trimStart(d))}`));
+
+        // proc.stdout.on('data', d => stdout?.write(d));
+        // proc.stderr.on('data', d => stdout?.write(d));
 
         proc.on('close', (code) => code !== 0 ? reject(new Error(`${cmd} <${Path.resolve(cwd ?? '.')}> Exited with code ${code}`)) : resolve());
         proc.on('error', (err) => reject(err));
