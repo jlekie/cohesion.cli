@@ -102,7 +102,8 @@ export const ConfigSchema = Zod.object({
     ]).optional(),
     labels: Zod.record(Zod.string(), Zod.string()).optional(),
     tags: Zod.string().array().optional(),
-    tasks: TaskSchema.array().optional()
+    tasks: TaskSchema.array().optional(),
+    dependencies: Zod.record(Zod.string(), Zod.string().array()).optional(),
 });
 
 export interface ConfigParams {
@@ -110,12 +111,14 @@ export interface ConfigParams {
     labels?: Config['labels'];
     tags?: Config['tags'];
     tasks?: Config['tasks'];
+    dependencies?: Config['dependencies'];
 }
 export class Config {
     public modules: ModuleReference[];
     public labels: Record<string, string>;
     public tags: string[];
     public tasks: Task[];
+    public dependencies: Record<string, string[]>;
 
     #path?: string;
     public get path() {
@@ -155,6 +158,7 @@ export class Config {
         this.labels = params.labels ?? {};
         this.tags = params.tags ?? [];
         this.tasks = params.tasks ?? [];
+        this.dependencies = params.dependencies ?? {};
     }
 
     public register(path: string, { parentConfig, initializer }: { parentConfig?: Config, initializer?: ConfigInitializer } = {}) {
@@ -441,7 +445,7 @@ export interface DelegateActionParams {
 export class DelegateAction extends AAction {
     public readonly type = 'delegate';
     public task: string;
-    public dependencies: Record<string, string[]>
+    public dependencies: Record<string, string[]>;
     public included: Record<string, string>;
     public parallel: boolean;
 
@@ -485,13 +489,18 @@ export class DelegateAction extends AAction {
             //     await execPromise;
         }
 
-        if (!_.isEmpty(this.dependencies)) {
+        const dependencies = {
+            ...this.dependencies,
+            ...this.parentTask?.parentConfig?.dependencies
+        }
+
+        if (!_.isEmpty(dependencies)) {
             const pathspecs = configs.map(c => c.labels['cohesion:pathspec']);
 
             const explodedDependencies: [string, string][] = [];
-            for (const key in this.dependencies) {
+            for (const key in dependencies) {
                 const keyMatches = pathspecs.filter(c => Minimatch(c, key));
-                const valueMatches = pathspecs.filter(c => this.dependencies[key].some(v => Minimatch(c, v)));
+                const valueMatches = pathspecs.filter(c => dependencies[key].some(v => Minimatch(c, v)));
     
                 for (const keyMatch of keyMatches)
                     for (const valueMatch of valueMatches)
