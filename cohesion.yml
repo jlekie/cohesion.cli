@@ -1,0 +1,15 @@
+tags:
+  - nodejs
+  - cohesion
+tasks:
+  - name: build
+    actions:
+      - type: exec
+        cmd: yarn tsc --build
+  - name: watch
+    actions:
+      - type: exec
+        cmd: yarn tsc --watch --preserveWatchOutput
+  - name: publish
+    actions:
+      - type: yarn npm publish --access=public
