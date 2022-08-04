@@ -36,10 +36,12 @@ export const ExecActionSchema = Zod.object({
 
 export interface LocalDelegateActionSchema {
     type: 'delegate.local';
+    relative?: boolean;
     task: string;
 }
 export const LocalDelegateActionSchema = Zod.object({
     type: Zod.literal('delegate.local'),
+    relative: Zod.boolean().optional(),
     task: Zod.string()
 });
 
@@ -74,13 +76,13 @@ export const WatchActionSchema = Zod.object({
 export interface TaskSchema {
     name: string;
     parallel?: boolean;
-    actions?: Zod.infer<typeof ActionSchema>[];
+    actions?: (Zod.infer<typeof ActionSchema> | string)[];
     tasks?: TaskSchema[];
 }
 export const TaskSchema: Zod.ZodType<TaskSchema> = Zod.lazy(() => Zod.object({
     name: Zod.string(),
     parallel: Zod.boolean().optional(),
-    actions: ActionSchema.array().optional(),
+    actions: Zod.union([ ActionSchema, Zod.string() ]).array().optional(),
     tasks: TaskSchema.array().optional()
 }));
 
@@ -286,7 +288,7 @@ export class Task {
         return new Task({
             ...value,
             parallel: value.parallel ?? false,
-            actions: value.actions?.map(i => AAction.fromSchema(i)),
+            actions: value.actions?.map(i => _.isString(i) ? new LocalDelegateAction({ relative: true, task: i }) : AAction.fromSchema(i)),
             tasks: value.tasks?.map(i => Task.fromSchema(i))
         });
     }
@@ -400,10 +402,12 @@ export class ExecAction extends AAction {
 }
 
 export interface LocalDelegateActionParams {
-    task: DelegateAction['task'];
+    relative: LocalDelegateAction['relative'];
+    task: LocalDelegateAction['task'];
 }
 export class LocalDelegateAction extends AAction {
     public readonly type = 'delegate.local';
+    public relative: boolean;
     public task: string;
 
     public static parse(value: unknown) {
@@ -411,22 +415,24 @@ export class LocalDelegateAction extends AAction {
     }
     public static fromSchema(value: Zod.infer<typeof LocalDelegateActionSchema>) {
         return new LocalDelegateAction({
-            ...value
+            ...value,
+            relative: value.relative ?? false
         });
     }
 
     public constructor(params: LocalDelegateActionParams) {
         super();
 
+        this.relative = params.relative;
         this.task = params.task;
     }
 
     public async exec() {
-        const parentConfig = this.parentTask?.parentConfig;
-        if (!parentConfig)
+        const context = this.relative ? this.parentTask : this.parentTask?.parentConfig;
+        if (!context)
             return;
 
-        await parentConfig.exec(this.task.split(' '));
+        await context.exec(this.task.split(' '));
     }
 }
 
