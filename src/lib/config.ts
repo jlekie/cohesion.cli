@@ -505,7 +505,7 @@ export class DelegateAction extends AAction {
             const sortedPathspecs = Toposort(explodedDependencies).reverse();
             configs = _(configs)
                 .orderBy(c => sortedPathspecs.findIndex(p => p === c.labels['cohesion:pathspec']))
-                .filter(config => _.isEmpty(this.included) || _.some(this.included, (value, key) => _.some(value, v => v.every(vv => config.labels[key] === vv))))
+                .filter(config => _.isEmpty(this.included) || _.every(this.included, (value, key) => _.some(value, v => v.every(vv => config.labels[key] === vv))))
                 .value()
 
             // configs = Toposort(explodedDependencies).reverse()
