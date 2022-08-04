@@ -46,14 +46,14 @@ export const LocalDelegateActionSchema = Zod.object({
 export interface DelegateActionSchema {
     type: 'delegate';
     dependencies?: Record<string, string[]>;
-    included?: Record<string, string>;
+    included?: Record<string, string | string[]>;
     task: string;
     parallel?: boolean;
 }
 export const DelegateActionSchema = Zod.object({
     type: Zod.literal('delegate'),
     dependencies: Zod.record(Zod.string(), Zod.string().array()).optional(),
-    included: Zod.record(Zod.string(), Zod.string()).optional(),
+    included: Zod.record(Zod.string(), Zod.union([ Zod.string(), Zod.string().array() ])).optional(),
     task: Zod.string(),
     parallel: Zod.boolean().optional(),
 });
@@ -218,17 +218,15 @@ export class Config {
     }
 
     public async exec(args: string[]) {
-        const task = this.tasks.find(t => t.name === args[0]);
-        if (!task)
-            return;
+        const currentArgs = args[0].split(':');
+        const tasks = this.tasks.filter(t => currentArgs.some(a => a === t.name));
 
-        await task.exec(args.slice(1));
-        // const task = args.slice(1).reduce((task, value) => task?.tasks.find(t => t.name === value), this.tasks.find(t => t.name === args[0]));
+        await Bluebird.map(tasks, task => task.exec(args.slice(1)));
+
         // if (!task)
         //     return;
 
-        // for (const action of task.actions)
-        //     await action.exec();
+        // await task.exec(args.slice(1));
     }
 }
 
@@ -316,11 +314,15 @@ export class Task {
 
     public async exec(args: string[] = []) {
         if (args.length) {
-            const task = this.tasks.find(t => t.name === args[0]);
-            if (!task)
-                throw new Error(`Could not find matching command ${args}`)
+            const currentArgs = args[0].split(':');
+            const tasks = this.tasks.filter(t => currentArgs.some(a => a === t.name));
+    
+            await Bluebird.map(tasks, task => task.exec(args.slice(1)));
+            // const task = this.tasks.find(t => t.name === args[0]);
+            // if (!task)
+            //     throw new Error(`Could not find matching command ${args}`)
 
-            task.exec(args.slice(1));
+            // task.exec(args.slice(1));
         }
         else {
             if (this.parallel) {
@@ -446,7 +448,7 @@ export class DelegateAction extends AAction {
     public readonly type = 'delegate';
     public task: string;
     public dependencies: Record<string, string[]>;
-    public included: Record<string, string>;
+    public included: Record<string, string[][]>;
     public parallel: boolean;
 
     public static parse(value: unknown) {
@@ -455,7 +457,10 @@ export class DelegateAction extends AAction {
     public static fromSchema(value: Zod.infer<typeof DelegateActionSchema>) {
         return new DelegateAction({
             ...value,
-            parallel: value.parallel ?? false
+            parallel: value.parallel ?? false,
+            included: value.included && _.transform(value.included, (result, value, key) => {
+                result[key] = _.isArray(value) ? value.map(v => v.split(',')) : [ value.split(',') ];
+            }, {} as Record<string, string[][]>)
         });
     }
 
@@ -497,9 +502,15 @@ export class DelegateAction extends AAction {
             }
             // console.log(explodedDependencies)
 
-            configs = Toposort(explodedDependencies).reverse()
-                .map(p => configs.find(c => c.labels['cohesion:pathspec'] === p) as Config)
-                .filter(config => _.isEmpty(this.included) || _.some(this.included, (value, key) => config.labels[key] === value));
+            const sortedPathspecs = Toposort(explodedDependencies).reverse();
+            configs = _(configs)
+                .orderBy(c => sortedPathspecs.findIndex(p => p === c.labels['cohesion:pathspec']))
+                .filter(config => _.isEmpty(this.included) || _.some(this.included, (value, key) => _.some(value, v => v.every(vv => config.labels[key] === vv))))
+                .value()
+
+            // configs = Toposort(explodedDependencies).reverse()
+            //     .map(p => configs.find(c => c.labels['cohesion:pathspec'] === p) as Config)
+            //     .filter(config => _.isEmpty(this.included) || _.some(this.included, (value, key) => _.some(value, v => v.every(vv => config.labels[key] === vv))));
         }
 
         if (this.parallel)

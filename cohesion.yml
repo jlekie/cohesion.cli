@@ -12,4 +12,5 @@ tasks:
         cmd: yarn tsc --watch --preserveWatchOutput
   - name: publish
     actions:
-      - type: yarn npm publish --access=public
+      - type: exec
+        cmd: yarn npm publish --access=public
