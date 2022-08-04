@@ -218,15 +218,11 @@ export class Config {
     }
 
     public async exec(args: string[]) {
-        const currentArgs = args[0].split(':');
-        const tasks = this.tasks.filter(t => currentArgs.some(a => a === t.name));
-
-        await Bluebird.map(tasks, task => task.exec(args.slice(1)));
-
-        // if (!task)
-        //     return;
-
-        // await task.exec(args.slice(1));
+        await Bluebird.map(args[0].split('|'), async parg => {
+            await Bluebird.mapSeries(parg.split(','), async sarg => {
+                await this.tasks.find(t => t.name === sarg)?.exec(args.slice(1));
+            });
+        });
     }
 }
 
@@ -314,15 +310,11 @@ export class Task {
 
     public async exec(args: string[] = []) {
         if (args.length) {
-            const currentArgs = args[0].split(':');
-            const tasks = this.tasks.filter(t => currentArgs.some(a => a === t.name));
-    
-            await Bluebird.map(tasks, task => task.exec(args.slice(1)));
-            // const task = this.tasks.find(t => t.name === args[0]);
-            // if (!task)
-            //     throw new Error(`Could not find matching command ${args}`)
-
-            // task.exec(args.slice(1));
+            await Bluebird.map(args[0].split('|'), async parg => {
+                await Bluebird.mapSeries(parg.split(','), async sarg => {
+                    await this.tasks.find(t => t.name === sarg)?.exec(args.slice(1));
+                });
+            });
         }
         else {
             if (this.parallel) {
