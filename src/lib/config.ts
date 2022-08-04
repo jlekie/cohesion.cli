@@ -475,19 +475,8 @@ export class DelegateAction extends AAction {
 
         let configs: Array<Config> = [];
 
-        const execPromises = [];
-        for await (const config of parentConfig.resolveConfigs()) {
-            if (!_.isEmpty(this.included) && !_.some(this.included, (value, key) => config.labels[key] == value))
-                continue;
-
+        for await (const config of parentConfig.resolveConfigs())
             configs.push(config);
-
-            // const execPromise = config.exec(this.task.split(' '));
-            // execPromises.push(execPromise);
-
-            // if (!this.parallel)
-            //     await execPromise;
-        }
 
         const dependencies = {
             ...this.dependencies,
@@ -501,22 +490,22 @@ export class DelegateAction extends AAction {
             for (const key in dependencies) {
                 const keyMatches = pathspecs.filter(c => Minimatch(c, key));
                 const valueMatches = pathspecs.filter(c => dependencies[key].some(v => Minimatch(c, v)));
-    
+
                 for (const keyMatch of keyMatches)
                     for (const valueMatch of valueMatches)
                         explodedDependencies.push([ keyMatch, valueMatch ]);
             }
             // console.log(explodedDependencies)
-    
-            configs = Toposort(explodedDependencies).reverse().map(p => configs.find(c => c.labels['cohesion:pathspec'] === p) as Config);
+
+            configs = Toposort(explodedDependencies).reverse()
+                .map(p => configs.find(c => c.labels['cohesion:pathspec'] === p) as Config)
+                .filter(config => _.isEmpty(this.included) || _.some(this.included, (value, key) => config.labels[key] === value));
         }
 
         if (this.parallel)
             await Bluebird.map(configs, config => config.exec(this.task.split(' ')));
         else
             await Bluebird.mapSeries(configs, config => config.exec(this.task.split(' ')));
-
-        // await Promise.all(execPromises);
     }
 }
 
