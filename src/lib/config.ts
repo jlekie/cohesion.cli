@@ -28,10 +28,12 @@ export const ActionSchema: Zod.ZodType<ActionSchema> = Zod.lazy(() => Zod.discri
 export interface ExecActionSchema {
     type: 'exec';
     cmd: string;
+    requiredVariables?: string[];
 }
 export const ExecActionSchema = Zod.object({
     type: Zod.literal('exec'),
-    cmd: Zod.string()
+    cmd: Zod.string(),
+    requiredVariables: Zod.string().array().optional()
 });
 
 export interface LocalDelegateActionSchema {
@@ -51,6 +53,7 @@ export interface DelegateActionSchema {
     included?: Record<string, string | string[]>;
     task: string;
     parallel?: boolean;
+    variables?: Record<string, string>;
 }
 export const DelegateActionSchema = Zod.object({
     type: Zod.literal('delegate'),
@@ -58,6 +61,7 @@ export const DelegateActionSchema = Zod.object({
     included: Zod.record(Zod.string(), Zod.union([ Zod.string(), Zod.string().array() ])).optional(),
     task: Zod.string(),
     parallel: Zod.boolean().optional(),
+    variables: Zod.record(Zod.string(), Zod.string()).optional()
 });
 
 export interface WatchActionSchema {
@@ -78,12 +82,16 @@ export interface TaskSchema {
     parallel?: boolean;
     actions?: (Zod.infer<typeof ActionSchema> | string)[];
     tasks?: TaskSchema[];
+    variables?: Record<string, string>;
+    pathVariables?: Record<string, string>;
 }
 export const TaskSchema: Zod.ZodType<TaskSchema> = Zod.lazy(() => Zod.object({
     name: Zod.string(),
     parallel: Zod.boolean().optional(),
     actions: Zod.union([ ActionSchema, Zod.string() ]).array().optional(),
-    tasks: TaskSchema.array().optional()
+    tasks: TaskSchema.array().optional(),
+    variables: Zod.record(Zod.string(), Zod.string()).optional(),
+    pathVariables: Zod.record(Zod.string(), Zod.string()).optional()
 }));
 
 export const ModuleReferenceSchema = Zod.union([
@@ -97,6 +105,10 @@ export const ModuleReferenceSchema = Zod.union([
     })
 ]);
 
+export interface ExecParams {
+    vars: Record<string, string>;
+}
+
 export const ConfigSchema = Zod.object({
     modules: Zod.union([
         ModuleReferenceSchema,
@@ -106,6 +118,8 @@ export const ConfigSchema = Zod.object({
     tags: Zod.string().array().optional(),
     tasks: TaskSchema.array().optional(),
     dependencies: Zod.record(Zod.string(), Zod.string().array()).optional(),
+    variables: Zod.record(Zod.string(), Zod.string()).optional(),
+    pathVariables: Zod.record(Zod.string(), Zod.string()).optional()
 });
 
 export interface ConfigParams {
@@ -114,6 +128,8 @@ export interface ConfigParams {
     tags?: Config['tags'];
     tasks?: Config['tasks'];
     dependencies?: Config['dependencies'];
+    variables?: Config['variables'];
+    pathVariables?: Config['pathVariables'];
 }
 export class Config {
     public modules: ModuleReference[];
@@ -121,6 +137,8 @@ export class Config {
     public tags: string[];
     public tasks: Task[];
     public dependencies: Record<string, string[]>;
+    public variables: Record<string, string>;
+    public pathVariables: Record<string, string>;
 
     #path?: string;
     public get path() {
@@ -161,6 +179,8 @@ export class Config {
         this.tags = params.tags ?? [];
         this.tasks = params.tasks ?? [];
         this.dependencies = params.dependencies ?? {};
+        this.variables = params.variables ?? {};
+        this.pathVariables = params.pathVariables ?? {};
     }
 
     public register(path: string, { parentConfig, initializer }: { parentConfig?: Config, initializer?: ConfigInitializer } = {}) {
@@ -219,10 +239,22 @@ export class Config {
         // }
     }
 
-    public async exec(args: string[]) {
+    public resolveVariables(): Record<string, string> {
+        const pathVariables: Record<string, string> = {};
+        for (const key in this.pathVariables)
+            pathVariables[key] = Path.resolve(this.path ?? '.', this.pathVariables[key])
+
+        return {
+            ...this.variables,
+            ...pathVariables,
+            ...this.parentConfig?.resolveVariables()
+        }
+    }
+
+    public async exec(args: string[], execParams: ExecParams = { vars: {} }) {
         await Bluebird.map(args[0].split('|'), async parg => {
             await Bluebird.mapSeries(parg.split(','), async sarg => {
-                await this.tasks.find(t => t.name === sarg)?.exec(args.slice(1));
+                await this.tasks.find(t => t.name === sarg)?.exec(args.slice(1), execParams);
             });
         });
     }
@@ -264,12 +296,16 @@ export interface TaskParams {
     parallel: Task['parallel'];
     actions?: Task['actions'];
     tasks?: Task['tasks'];
+    variables?: Task['variables'];
+    pathVariables?: Task['pathVariables'];
 }
 export class Task {
     public name: string;
     public parallel: boolean;
     public actions: Action[];
     public tasks: Task[];
+    public variables: Record<string, string>;
+    public pathVariables: Record<string, string>;
 
     #parentConfig?: Config;
     public get parentConfig() {
@@ -298,6 +334,8 @@ export class Task {
         this.parallel = params.parallel;
         this.actions = params.actions ?? [];
         this.tasks = params.tasks ?? [];
+        this.variables = params.variables ?? {};
+        this.pathVariables = params.pathVariables ?? {};
     }
 
     public register(parentConfig: Config, parentTask?: Task) {
@@ -310,31 +348,57 @@ export class Task {
         return this;
     }
 
-    public async exec(args: string[] = []) {
+    public async exec(args: string[], execParams: ExecParams) {
         if (args.length) {
             await Bluebird.map(args[0].split('|'), async parg => {
                 await Bluebird.mapSeries(parg.split(','), async sarg => {
-                    await this.tasks.find(t => t.name === sarg)?.exec(args.slice(1));
+                    await this.tasks.find(t => t.name === sarg)?.exec(args.slice(1), execParams);
                 });
             });
+
+            // const tasks: Task[][] = [];
+            // for (const parg of args[0].split('|')) {
+            //     const sTasks = _.compact(parg.split(',').map(sarg => this.tasks.find(t => t.name === sarg)));
+            //     if (sTasks.length)
+            //         tasks.push(sTasks);
+            // }
+
+            // await Bluebird.map(tasks, async taskGroup => {
+            //     await Bluebird.mapSeries(taskGroup, async task => {
+            //         await task.exec(args.slice(1));
+            //     });
+            // });
         }
         else {
             if (this.parallel) {
                 if (this.actions.length)
-                    await Bluebird.map(this.actions, action => action.exec());
+                    await Bluebird.map(this.actions, action => action.exec(execParams));
                 else
-                    await Bluebird.map(this.tasks, task => task.exec());
+                    await Bluebird.map(this.tasks, task => task.exec([], execParams));
             }
             else {
                 if (this.actions.length) {
                     for (const action of this.actions)
-                        await action.exec();
+                        await action.exec(execParams);
                 }
                 else {
                     for (const task of this.tasks)
-                        await task.exec();
+                        await task.exec([], execParams);
                 }
             }
+        }
+    }
+
+    public resolveVariables(): Record<string, string> {
+        const pathVariables: Record<string, string> = {};
+        for (const key in this.pathVariables)
+            pathVariables[key] = Path.resolve(this.#parentConfig?.path ?? '.', this.pathVariables[key])
+
+        return {
+            ...this.variables,
+            ...pathVariables,
+            ...this.parentTask?.resolveVariables(),
+            ...this.parentConfig?.resolveVariables()
         }
     }
 }
@@ -367,15 +431,17 @@ export abstract class AAction {
         return this;
     }
 
-    public abstract exec(): void | Promise<void>;
+    public abstract exec(execParams: ExecParams): void | Promise<void>;
 }
 
 export interface ExecActionParams {
     cmd: ExecAction['cmd'];
+    requiredVariables?: ExecAction['requiredVariables'];
 }
 export class ExecAction extends AAction {
     public readonly type = 'exec';
     public cmd: string;
+    public requiredVariables: string[]
 
     public static parse(value: unknown) {
         return this.fromSchema(ExecActionSchema.parse(value));
@@ -390,10 +456,21 @@ export class ExecAction extends AAction {
         super();
 
         this.cmd = params.cmd;
+        this.requiredVariables = params.requiredVariables ?? [];
     }
 
-    public async exec() {
-        await exec(this.cmd, {
+    public async exec(execParams: ExecParams) {
+        const vars = {
+            ...this.parentTask?.resolveVariables(),
+            ...execParams.vars
+        }
+
+        for (const requiredVariable of this.requiredVariables) {
+            if (!vars[requiredVariable])
+                throw new Error(`Required variable ${requiredVariable} not defined`);
+        }
+
+        await exec(_.template(this.cmd)(vars), {
             cwd: this.parentTask?.parentConfig?.path,
             stdout: process.stdout,
             // label: this.cmd
@@ -427,12 +504,12 @@ export class LocalDelegateAction extends AAction {
         this.task = params.task;
     }
 
-    public async exec() {
+    public async exec(execParams: ExecParams) {
         const context = this.relative ? this.parentTask : this.parentTask?.parentConfig;
         if (!context)
             return;
 
-        await context.exec(this.task.split(' '));
+        await context.exec(this.task.split(' '), execParams);
     }
 }
 
@@ -441,6 +518,7 @@ export interface DelegateActionParams {
     dependencies?: DelegateAction['dependencies'];
     included?: DelegateAction['included'];
     parallel: DelegateAction['parallel'];
+    variables?: DelegateAction['variables'];
 }
 export class DelegateAction extends AAction {
     public readonly type = 'delegate';
@@ -448,6 +526,7 @@ export class DelegateAction extends AAction {
     public dependencies: Record<string, string[]>;
     public included: Record<string, string[][]>;
     public parallel: boolean;
+    public variables: Record<string, string>;
 
     public static parse(value: unknown) {
         return this.fromSchema(DelegateActionSchema.parse(value));
@@ -469,9 +548,10 @@ export class DelegateAction extends AAction {
         this.dependencies = params.dependencies ?? {};
         this.included = params.included ?? {};
         this.parallel = params.parallel;
+        this.variables = params.variables ?? {};
     }
 
-    public async exec() {
+    public async exec(execParams: ExecParams) {
         const parentConfig = this.parentTask?.parentConfig;
         if (!parentConfig)
             return;
@@ -511,10 +591,29 @@ export class DelegateAction extends AAction {
             //     .filter(config => _.isEmpty(this.included) || _.some(this.included, (value, key) => _.some(value, v => v.every(vv => config.labels[key] === vv))));
         }
 
+        const vars = {
+            ...this.parentTask?.resolveVariables(),
+            ...execParams.vars
+        }
+
+        const forwardedVars: Record<string, string> = {};
+        for (const key in this.variables)
+            forwardedVars[key] = _.template(this.variables[key])(vars);
+
         if (this.parallel)
-            await Bluebird.map(configs, config => config.exec(this.task.split(' ')));
+            await Bluebird.map(configs, config => config.exec(this.task.split(' '), {
+                vars: {
+                    ...execParams.vars,
+                    ...forwardedVars
+                }
+            }));
         else
-            await Bluebird.mapSeries(configs, config => config.exec(this.task.split(' ')));
+            await Bluebird.mapSeries(configs, config => config.exec(this.task.split(' '), {
+                vars: {
+                    ...execParams.vars,
+                    ...forwardedVars
+                }
+            }));
     }
 }
 
@@ -555,14 +654,14 @@ export class WatchAction extends AAction {
         return this;
     }
 
-    public async exec() {
+    public async exec(execParams: ExecParams) {
         const execute = _.debounce(async () => {
             if (this.parallel) {
-                await Bluebird.map(this.actions, action => action.exec());
+                await Bluebird.map(this.actions, action => action.exec(execParams));
             }
             else {
                 for (const action of this.actions)
-                    await action.exec();
+                    await action.exec(execParams);
             }
         }, 500);
 

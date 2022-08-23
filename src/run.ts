@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import 'source-map-support/register';
 
+import * as _ from 'lodash';
 import { Builtins, Cli, Command, Option } from 'clipanion';
 import { loadConfig } from './lib/config';
 
@@ -30,6 +31,8 @@ class DefaultCommand extends Command {
     cwd = Option.String('--cwd');
     config = Option.String('--config,-c', 'cohesion.yml');
 
+    vars = Option.Array('--var', []);
+
     args = Option.Rest();
 
     public async execute() {
@@ -42,14 +45,18 @@ class DefaultCommand extends Command {
         // for await (const childConfig of config.resolveConfigs())
         //     console.log(childConfig);
 
-        await config.exec(this.args);
+        const vars = _(this.vars).map(v => v.split('=')).fromPairs().value()
+
+        await config.exec(this.args, {
+            vars
+        });
     }
 }
 
 const cli = new Cli({
-    binaryName: '[ cohesion ]',
+    binaryName: '[ cohesion, co ]',
     binaryLabel: 'Cohesion',
-    binaryVersion: '1.0.0-alpha.1'
+    binaryVersion: '1.0.0-alpha.9'
 });
 
 cli.register(ViewCommand);
