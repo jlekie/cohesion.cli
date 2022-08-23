@@ -11,18 +11,21 @@ import * as Minimatch from 'minimatch';
 
 import * as Toposort from 'toposort';
 
+import * as Dotenv from 'dotenv';
+
 import { exec } from './misc';
 
 interface ConfigInitializer {
     name?: (config: Config) => string;
 }
 
-export type ActionSchema = ExecActionSchema | DelegateActionSchema | WatchActionSchema | LocalDelegateActionSchema;
+export type ActionSchema = ExecActionSchema | DelegateActionSchema | WatchActionSchema | LocalDelegateActionSchema | CopyActionSchema;
 export const ActionSchema: Zod.ZodType<ActionSchema> = Zod.lazy(() => Zod.discriminatedUnion('type', [
     ExecActionSchema,
     DelegateActionSchema,
     WatchActionSchema,
-    LocalDelegateActionSchema
+    LocalDelegateActionSchema,
+    CopyActionSchema
 ]));
 
 export interface ExecActionSchema {
@@ -51,7 +54,7 @@ export interface DelegateActionSchema {
     type: 'delegate';
     dependencies?: Record<string, string[]>;
     included?: Record<string, string | string[]>;
-    task: string;
+    task?: string;
     parallel?: boolean;
     variables?: Record<string, string>;
 }
@@ -59,7 +62,7 @@ export const DelegateActionSchema = Zod.object({
     type: Zod.literal('delegate'),
     dependencies: Zod.record(Zod.string(), Zod.string().array()).optional(),
     included: Zod.record(Zod.string(), Zod.union([ Zod.string(), Zod.string().array() ])).optional(),
-    task: Zod.string(),
+    task: Zod.string().optional(),
     parallel: Zod.boolean().optional(),
     variables: Zod.record(Zod.string(), Zod.string()).optional()
 });
@@ -75,6 +78,17 @@ export const WatchActionSchema = Zod.object({
     patterns: Zod.string().array().optional(),
     actions: ActionSchema.array().optional(),
     parallel: Zod.boolean().optional(),
+});
+
+export interface CopyActionSchema {
+    type: 'copy';
+    source: string;
+    destination: string;
+}
+export const CopyActionSchema = Zod.object({
+    type: Zod.literal('copy'),
+    source: Zod.string(),
+    destination: Zod.string()
 });
 
 export interface TaskSchema {
@@ -105,9 +119,13 @@ export const ModuleReferenceSchema = Zod.union([
     })
 ]);
 
-export interface ExecParams {
-    vars: Record<string, string>;
-}
+export const VariableFileReferenceSchema = Zod.union([
+    Zod.string(),
+    Zod.object({
+        path: Zod.string(),
+        prefix: Zod.string().optional()
+    })
+]);
 
 export const ConfigSchema = Zod.object({
     modules: Zod.union([
@@ -119,8 +137,68 @@ export const ConfigSchema = Zod.object({
     tasks: TaskSchema.array().optional(),
     dependencies: Zod.record(Zod.string(), Zod.string().array()).optional(),
     variables: Zod.record(Zod.string(), Zod.string()).optional(),
-    pathVariables: Zod.record(Zod.string(), Zod.string()).optional()
+    pathVariables: Zod.record(Zod.string(), Zod.string()).optional(),
+    variableFiles: VariableFileReferenceSchema.array().optional()
 });
+
+export interface ExecParams {
+    vars: Record<string, string>;
+}
+
+export interface VariableFileReferenceParams {
+    path: VariableFileReference['path'];
+    prefix?: VariableFileReference['prefix'];
+}
+export class VariableFileReference {
+    public path: string;
+    public prefix?: string;
+
+    #parentConfig?: Config;
+    public get parentConfig() {
+        return this.#parentConfig;
+    }
+
+    public static parse(value: unknown) {
+        return this.fromSchema(VariableFileReferenceSchema.parse(value));
+    }
+    public static fromSchema(value: Zod.infer<typeof VariableFileReferenceSchema>) {
+        if (_.isString(value)) {
+            return new VariableFileReference({
+                path: value
+            });
+        }
+        else {
+            const variableFileReference: VariableFileReference = new VariableFileReference({
+                ...value
+            });
+    
+            return variableFileReference;
+        }
+    }
+
+    public constructor(params: VariableFileReferenceParams) {
+        this.path = params.path;
+        this.prefix = params.prefix;
+    }
+
+    public register(parentConfig: Config) {
+        this.#parentConfig = parentConfig;
+
+        return this;
+    }
+
+    public async resolveVariables(): Promise<Record<string, string>> {
+        const path = Path.resolve(this.parentConfig?.path ?? '.', this.path);
+        if (!await FS.pathExists(path))
+            return {};
+
+        const vars = _.reduce(await FS.readFile(path, 'utf8').then(content => Dotenv.parse(content)), (vars, value, key) => ({
+            [`${this.prefix}${key}`]: value as string
+        }), {} as Record<string, string>);
+
+        return vars;
+    }
+}
 
 export interface ConfigParams {
     modules?: Config['modules'];
@@ -130,6 +208,7 @@ export interface ConfigParams {
     dependencies?: Config['dependencies'];
     variables?: Config['variables'];
     pathVariables?: Config['pathVariables'];
+    variableFiles?: Config['variableFiles'];
 }
 export class Config {
     public modules: ModuleReference[];
@@ -139,6 +218,7 @@ export class Config {
     public dependencies: Record<string, string[]>;
     public variables: Record<string, string>;
     public pathVariables: Record<string, string>;
+    public variableFiles: VariableFileReference[];
 
     #path?: string;
     public get path() {
@@ -167,7 +247,8 @@ export class Config {
         const config: Config = new Config({
             ...value,
             modules: value.modules ? (_.isArray(value.modules) ? value.modules.map(m => ModuleReference.fromSchema(m)) : [ ModuleReference.fromSchema(value.modules) ]) : undefined,
-            tasks: value.tasks?.map(i => Task.fromSchema(i))
+            tasks: value.tasks?.map(i => Task.fromSchema(i)),
+            variableFiles: value.variableFiles?.map(i => VariableFileReference.fromSchema(i))
         });
 
         return config;
@@ -181,6 +262,7 @@ export class Config {
         this.dependencies = params.dependencies ?? {};
         this.variables = params.variables ?? {};
         this.pathVariables = params.pathVariables ?? {};
+        this.variableFiles = params.variableFiles ?? [];
     }
 
     public register(path: string, { parentConfig, initializer }: { parentConfig?: Config, initializer?: ConfigInitializer } = {}) {
@@ -191,6 +273,8 @@ export class Config {
         this.#name = Path.basename(path);
 
         this.tasks.forEach(t => t.register(this));
+
+        this.variableFiles.forEach(i => i.register(this));
 
         return this;
     }
@@ -239,7 +323,7 @@ export class Config {
         // }
     }
 
-    public resolveVariables(): Record<string, string> {
+    public async resolveVariables(): Promise<Record<string, string>> {
         const pathVariables: Record<string, string> = {};
         for (const key in this.pathVariables)
             pathVariables[key] = Path.resolve(this.path ?? '.', this.pathVariables[key])
@@ -247,7 +331,11 @@ export class Config {
         return {
             ...this.variables,
             ...pathVariables,
-            ...this.parentConfig?.resolveVariables()
+            ...await Bluebird.reduce(this.variableFiles, async (vars, ref) => ({
+                ...vars,
+                ...await ref.resolveVariables()
+            }), {} as Record<string, string>),
+            ...await this.parentConfig?.resolveVariables()
         }
     }
 
@@ -389,7 +477,7 @@ export class Task {
         }
     }
 
-    public resolveVariables(): Record<string, string> {
+    public async resolveVariables(): Promise<Record<string, string>> {
         const pathVariables: Record<string, string> = {};
         for (const key in this.pathVariables)
             pathVariables[key] = Path.resolve(this.#parentConfig?.path ?? '.', this.pathVariables[key])
@@ -397,8 +485,8 @@ export class Task {
         return {
             ...this.variables,
             ...pathVariables,
-            ...this.parentTask?.resolveVariables(),
-            ...this.parentConfig?.resolveVariables()
+            ...await this.parentTask?.resolveVariables(),
+            ...await this.parentConfig?.resolveVariables()
         }
     }
 }
@@ -421,6 +509,8 @@ export abstract class AAction {
             return WatchAction.fromSchema(value);
         else if (value.type === 'delegate.local')
             return LocalDelegateAction.fromSchema(value);
+        else if (value.type === 'copy')
+            return CopyAction.fromSchema(value);
         else
             throw new Error('Could not parse action schema');
     }
@@ -461,7 +551,7 @@ export class ExecAction extends AAction {
 
     public async exec(execParams: ExecParams) {
         const vars = {
-            ...this.parentTask?.resolveVariables(),
+            ...await this.parentTask?.resolveVariables(),
             ...execParams.vars
         }
 
@@ -514,7 +604,7 @@ export class LocalDelegateAction extends AAction {
 }
 
 export interface DelegateActionParams {
-    task: DelegateAction['task'];
+    task?: DelegateAction['task'];
     dependencies?: DelegateAction['dependencies'];
     included?: DelegateAction['included'];
     parallel: DelegateAction['parallel'];
@@ -522,7 +612,7 @@ export interface DelegateActionParams {
 }
 export class DelegateAction extends AAction {
     public readonly type = 'delegate';
-    public task: string;
+    public task?: string;
     public dependencies: Record<string, string[]>;
     public included: Record<string, string[][]>;
     public parallel: boolean;
@@ -600,15 +690,19 @@ export class DelegateAction extends AAction {
         for (const key in this.variables)
             forwardedVars[key] = _.template(this.variables[key])(vars);
 
+        const task = this.task?.split(' ') ?? (this.parentTask ? [ this.parentTask.name ] : undefined);
+        if (!task)
+            throw new Error('No delegated task defined');
+
         if (this.parallel)
-            await Bluebird.map(configs, config => config.exec(this.task.split(' '), {
+            await Bluebird.map(configs, config => config.exec(task, {
                 vars: {
                     ...execParams.vars,
                     ...forwardedVars
                 }
             }));
         else
-            await Bluebird.mapSeries(configs, config => config.exec(this.task.split(' '), {
+            await Bluebird.mapSeries(configs, config => config.exec(task, {
                 vars: {
                     ...execParams.vars,
                     ...forwardedVars
@@ -681,7 +775,46 @@ export class WatchAction extends AAction {
     }
 }
 
-export type Action = ExecAction | DelegateAction | WatchAction | LocalDelegateAction;
+export interface CopyActionParams {
+    source: CopyAction['source'];
+    destination: CopyAction['destination'];
+}
+export class CopyAction extends AAction {
+    public readonly type = 'copy';
+    public source: string;
+    public destination: string;
+
+    public static parse(value: unknown) {
+        return this.fromSchema(CopyActionSchema.parse(value));
+    }
+    public static fromSchema(value: Zod.infer<typeof CopyActionSchema>): CopyAction {
+        return new CopyAction({
+            ...value
+        });
+    }
+
+    public constructor(params: CopyActionParams) {
+        super();
+
+        this.source = params.source;
+        this.destination = params.destination;
+    }
+
+    public async exec(execParams: ExecParams) {
+        await FS.copyFile(this.source, this.destination);
+        console.log(`Copied ${this.source} to ${this.destination}`);
+
+        // if (this.destination.endsWith('/') || this.destination.endsWith('\\')) {
+        //     const matches = await Globby(this.source, { cwd: this.parentTask?.parentConfig?.path });
+        //     await Bluebird.map(matches, async match => FS.copyFile(match, this.destination))
+        // }
+        // else {
+            
+        // }
+    }
+}
+
+export type Action = ExecAction | DelegateAction | WatchAction | LocalDelegateAction | CopyAction;
 
 export async function loadConfig(path: string, params: { parentConfig?: Config, initializer?: ConfigInitializer } = {}) {
     const resolvedPath = Path.resolve(path);
