@@ -47,9 +47,16 @@ class DefaultCommand extends Command {
 
         const vars = _(this.vars).map(v => v.split('=')).fromPairs().value()
 
-        for (const arg of this.args) {
-            const parsedArgs = parseArgs(arg)
-            await config.exec(parsedArgs, {
+        if (this.args.length) {
+            for (const arg of this.args) {
+                const parsedArgs = parseArgs(arg)
+                await config.exec(parsedArgs, {
+                    vars
+                });
+            }
+        }
+        else {
+            await config.exec([], {
                 vars
             });
         }
