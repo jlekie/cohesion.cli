@@ -141,6 +141,23 @@ export const ConfigSchema = Zod.object({
     variableFiles: VariableFileReferenceSchema.array().optional()
 });
 
+export type ParsedArgs = string[][][][];
+export function parseArgs(args: string): string[][][];
+export function parseArgs(args: string[]): string[][][][];
+export function parseArgs(args: string | string[]): string[][][] | string[][][][] {
+    if (_.isString(args)) {
+        return args.split('.').map(b => 
+            b.split('|').map(c => 
+                c.split(/,| /)));
+    }
+    else {
+        return args.map(a => 
+            a.split('.').map(b => 
+                b.split('|').map(c => 
+                    c.split(/,| /))));
+    }
+}
+
 export interface ExecParams {
     vars: Record<string, string>;
 }
@@ -339,9 +356,9 @@ export class Config {
         }
     }
 
-    public async exec(args: string[], execParams: ExecParams = { vars: {} }) {
-        await Bluebird.map(args[0].split('|'), async parg => {
-            await Bluebird.mapSeries(parg.split(','), async sarg => {
+    public async exec(args: string[][][], execParams: ExecParams = { vars: {} }) {
+        await Bluebird.map(args[0], async parg => {
+            await Bluebird.mapSeries(parg, async sarg => {
                 await this.tasks.find(t => t.name === sarg)?.exec(args.slice(1), execParams);
             });
         });
@@ -436,10 +453,10 @@ export class Task {
         return this;
     }
 
-    public async exec(args: string[], execParams: ExecParams) {
+    public async exec(args: string[][][], execParams: ExecParams) {
         if (args.length) {
-            await Bluebird.map(args[0].split('|'), async parg => {
-                await Bluebird.mapSeries(parg.split(','), async sarg => {
+            await Bluebird.map(args[0], async parg => {
+                await Bluebird.mapSeries(parg, async sarg => {
                     await this.tasks.find(t => t.name === sarg)?.exec(args.slice(1), execParams);
                 });
             });
@@ -595,11 +612,7 @@ export class LocalDelegateAction extends AAction {
     }
 
     public async exec(execParams: ExecParams) {
-        const context = this.relative ? this.parentTask : this.parentTask?.parentConfig;
-        if (!context)
-            return;
-
-        await context.exec(this.task.split(' '), execParams);
+        await (this.relative ? this.parentTask : this.parentTask?.parentConfig)?.exec([[this.task.split(' ')]], execParams);
     }
 }
 
@@ -690,19 +703,21 @@ export class DelegateAction extends AAction {
         for (const key in this.variables)
             forwardedVars[key] = _.template(this.variables[key])(vars);
 
-        const task = this.task?.split(' ') ?? (this.parentTask ? [ this.parentTask.name ] : undefined);
+        const task = this.task ?? (this.parentTask ? this.parentTask.name : undefined);
         if (!task)
             throw new Error('No delegated task defined');
 
+        const parsedArgs = parseArgs(task);
+
         if (this.parallel)
-            await Bluebird.map(configs, config => config.exec(task, {
+            await Bluebird.map(configs, config => config.exec(parsedArgs, {
                 vars: {
                     ...execParams.vars,
                     ...forwardedVars
                 }
             }));
         else
-            await Bluebird.mapSeries(configs, config => config.exec(task, {
+            await Bluebird.mapSeries(configs, config => config.exec(parsedArgs, {
                 vars: {
                     ...execParams.vars,
                     ...forwardedVars

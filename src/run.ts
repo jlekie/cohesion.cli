@@ -3,7 +3,7 @@ import 'source-map-support/register';
 
 import * as _ from 'lodash';
 import { Builtins, Cli, Command, Option } from 'clipanion';
-import { loadConfig } from './lib/config';
+import { loadConfig, parseArgs } from './lib/config';
 
 const [ node, app, ...args ] = process.argv;
 
@@ -47,9 +47,12 @@ class DefaultCommand extends Command {
 
         const vars = _(this.vars).map(v => v.split('=')).fromPairs().value()
 
-        await config.exec(this.args, {
-            vars
-        });
+        for (const arg of this.args) {
+            const parsedArgs = parseArgs(arg)
+            await config.exec(parsedArgs, {
+                vars
+            });
+        }
     }
 }
 
