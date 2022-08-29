@@ -717,11 +717,16 @@ export class DelegateAction extends AAction {
             configs = _(configs)
                 .orderBy(c => sortedPathspecs.findIndex(p => p === c.labels['cohesion:pathspec']))
                 .filter(config => _.isEmpty(this.included) || _.every(this.included, (value, key) => _.some(value, v => v.every(vv => config.labels[key] === vv))))
-                .value()
+                .value();
 
             // configs = Toposort(explodedDependencies).reverse()
             //     .map(p => configs.find(c => c.labels['cohesion:pathspec'] === p) as Config)
             //     .filter(config => _.isEmpty(this.included) || _.some(this.included, (value, key) => _.some(value, v => v.every(vv => config.labels[key] === vv))));
+        }
+        else {
+            configs = _(configs)
+                .filter(config => _.isEmpty(this.included) || _.every(this.included, (value, key) => _.some(value, v => v.every(vv => config.labels[key] === vv))))
+                .value();
         }
 
         const vars = {
