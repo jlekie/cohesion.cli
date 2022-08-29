@@ -54,7 +54,7 @@ export interface DelegateActionSchema {
     type: 'delegate';
     dependencies?: Record<string, string[]>;
     included?: Record<string, string | string[]>;
-    task?: string;
+    task?: string | string[];
     parallel?: boolean;
     variables?: Record<string, string>;
 }
@@ -62,7 +62,10 @@ export const DelegateActionSchema = Zod.object({
     type: Zod.literal('delegate'),
     dependencies: Zod.record(Zod.string(), Zod.string().array()).optional(),
     included: Zod.record(Zod.string(), Zod.union([ Zod.string(), Zod.string().array() ])).optional(),
-    task: Zod.string().optional(),
+    task: Zod.union([
+        Zod.string(),
+        Zod.string().array()
+    ]).optional(),
     parallel: Zod.boolean().optional(),
     variables: Zod.record(Zod.string(), Zod.string()).optional()
 });
@@ -135,6 +138,7 @@ export const ConfigSchema = Zod.object({
     labels: Zod.record(Zod.string(), Zod.string()).optional(),
     tags: Zod.string().array().optional(),
     tasks: TaskSchema.array().optional(),
+    actions: Zod.union([ ActionSchema, Zod.string() ]).array().optional(),
     dependencies: Zod.record(Zod.string(), Zod.string().array()).optional(),
     variables: Zod.record(Zod.string(), Zod.string()).optional(),
     pathVariables: Zod.record(Zod.string(), Zod.string()).optional(),
@@ -222,6 +226,7 @@ export interface ConfigParams {
     labels?: Config['labels'];
     tags?: Config['tags'];
     tasks?: Config['tasks'];
+    actions?: Config['actions'];
     dependencies?: Config['dependencies'];
     variables?: Config['variables'];
     pathVariables?: Config['pathVariables'];
@@ -232,6 +237,7 @@ export class Config {
     public labels: Record<string, string>;
     public tags: string[];
     public tasks: Task[];
+    public actions: Action[];
     public dependencies: Record<string, string[]>;
     public variables: Record<string, string>;
     public pathVariables: Record<string, string>;
@@ -265,6 +271,7 @@ export class Config {
             ...value,
             modules: value.modules ? (_.isArray(value.modules) ? value.modules.map(m => ModuleReference.fromSchema(m)) : [ ModuleReference.fromSchema(value.modules) ]) : undefined,
             tasks: value.tasks?.map(i => Task.fromSchema(i)),
+            actions: value.actions?.map(i => _.isString(i) ? new LocalDelegateAction({ relative: true, task: i }) : AAction.fromSchema(i)),
             variableFiles: value.variableFiles?.map(i => VariableFileReference.fromSchema(i))
         });
 
@@ -276,6 +283,7 @@ export class Config {
         this.labels = params.labels ?? {};
         this.tags = params.tags ?? [];
         this.tasks = params.tasks ?? [];
+        this.actions = params.actions ?? [];
         this.dependencies = params.dependencies ?? {};
         this.variables = params.variables ?? {};
         this.pathVariables = params.pathVariables ?? {};
@@ -357,11 +365,23 @@ export class Config {
     }
 
     public async exec(args: string[][][], execParams: ExecParams = { vars: {} }) {
-        await Bluebird.map(args[0], async parg => {
-            await Bluebird.mapSeries(parg, async sarg => {
-                await this.tasks.find(t => t.name === sarg)?.exec(args.slice(1), execParams);
+        if (args.length) {
+            await Bluebird.map(args[0], async parg => {
+                await Bluebird.mapSeries(parg, async sarg => {
+                    await this.tasks.find(t => t.name === sarg)?.exec(args.slice(1), execParams);
+                });
             });
-        });
+        }
+        else {
+            if (this.actions.length) {
+                for (const action of this.actions)
+                    await action.exec(execParams);
+            }
+            else {
+                for (const task of this.tasks)
+                    await task.exec([], execParams);
+            }
+        }
     }
 }
 
@@ -625,7 +645,7 @@ export interface DelegateActionParams {
 }
 export class DelegateAction extends AAction {
     public readonly type = 'delegate';
-    public task?: string;
+    public task?: string[];
     public dependencies: Record<string, string[]>;
     public included: Record<string, string[][]>;
     public parallel: boolean;
@@ -635,12 +655,15 @@ export class DelegateAction extends AAction {
         return this.fromSchema(DelegateActionSchema.parse(value));
     }
     public static fromSchema(value: Zod.infer<typeof DelegateActionSchema>) {
+        const task = _.isString(value.task) ? [ value.task ] : value.task;
+
         return new DelegateAction({
             ...value,
             parallel: value.parallel ?? false,
             included: value.included && _.transform(value.included, (result, value, key) => {
                 result[key] = _.isArray(value) ? value.map(v => v.split(',')) : [ value.split(',') ];
-            }, {} as Record<string, string[][]>)
+            }, {} as Record<string, string[][]>),
+            task
         });
     }
 
@@ -703,26 +726,30 @@ export class DelegateAction extends AAction {
         for (const key in this.variables)
             forwardedVars[key] = _.template(this.variables[key])(vars);
 
-        const task = this.task ?? (this.parentTask ? this.parentTask.name : undefined);
-        if (!task)
+        const tasks = this.task ?? (this.parentTask ? [ this.parentTask.name ] : undefined);
+        if (!tasks)
             throw new Error('No delegated task defined');
 
-        const parsedArgs = parseArgs(task);
+        for (const task of tasks) {
+            const parsedArgs = parseArgs(task);
 
-        if (this.parallel)
-            await Bluebird.map(configs, config => config.exec(parsedArgs, {
-                vars: {
-                    ...execParams.vars,
-                    ...forwardedVars
-                }
-            }));
-        else
-            await Bluebird.mapSeries(configs, config => config.exec(parsedArgs, {
-                vars: {
-                    ...execParams.vars,
-                    ...forwardedVars
-                }
-            }));
+            if (this.parallel) {
+                await Bluebird.map(configs, config => config.exec(parsedArgs, {
+                    vars: {
+                        ...execParams.vars,
+                        ...forwardedVars
+                    }
+                }));
+            }
+            else {
+                await Bluebird.mapSeries(configs, config => config.exec(parsedArgs, {
+                    vars: {
+                        ...execParams.vars,
+                        ...forwardedVars
+                    }
+                }));
+            }
+        }
     }
 }
 
