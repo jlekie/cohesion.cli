@@ -298,6 +298,7 @@ export class Config {
         this.#name = Path.basename(path);
 
         this.tasks.forEach(t => t.register(this));
+        this.actions.forEach(a => a.register(this));
 
         this.variableFiles.forEach(i => i.register(this));
 
@@ -468,7 +469,7 @@ export class Task {
         this.#parentTask = parentTask;
 
         this.tasks.forEach(t => t.register(parentConfig, this));
-        this.actions.forEach(a => a.register(this));
+        this.actions.forEach(a => a.register(parentConfig, this));
 
         return this;
     }
@@ -529,6 +530,11 @@ export class Task {
 }
 
 export abstract class AAction {
+    #parentConfig?: Config;
+    public get parentConfig() {
+        return this.#parentConfig;
+    }
+
     #parentTask?: Task;
     public get parentTask() {
         return this.#parentTask;
@@ -552,7 +558,8 @@ export abstract class AAction {
             throw new Error('Could not parse action schema');
     }
 
-    public register(parentTask: Task) {
+    public register(parentConfig: Config, parentTask?: Task) {
+        this.#parentConfig = parentConfig;
         this.#parentTask = parentTask;
 
         return this;
@@ -598,7 +605,7 @@ export class ExecAction extends AAction {
         }
 
         await exec(_.template(this.cmd)(vars), {
-            cwd: this.parentTask?.parentConfig?.path,
+            cwd: this.parentConfig?.path,
             stdout: process.stdout,
             // label: this.cmd
         });
@@ -632,7 +639,7 @@ export class LocalDelegateAction extends AAction {
     }
 
     public async exec(execParams: ExecParams) {
-        await (this.relative ? this.parentTask : this.parentTask?.parentConfig)?.exec([[this.task.split(' ')]], execParams);
+        await (this.relative ? this.parentTask : this.parentConfig)?.exec([[this.task.split(' ')]], execParams);
     }
 }
 
@@ -678,7 +685,7 @@ export class DelegateAction extends AAction {
     }
 
     public async exec(execParams: ExecParams) {
-        const parentConfig = this.parentTask?.parentConfig;
+        const parentConfig = this.parentConfig;
         if (!parentConfig)
             return;
 
@@ -689,7 +696,7 @@ export class DelegateAction extends AAction {
 
         const dependencies = {
             ...this.dependencies,
-            ...this.parentTask?.parentConfig?.dependencies
+            ...this.parentConfig?.dependencies
         }
 
         if (!_.isEmpty(dependencies)) {
@@ -783,9 +790,9 @@ export class WatchAction extends AAction {
         this.parallel = params.parallel;
     }
 
-    public register(parentTask: Task) {
-        super.register(parentTask);
-        this.actions.forEach(a => a.register(parentTask));
+    public register(parentConfig: Config, parentTask?: Task) {
+        super.register(parentConfig, parentTask);
+        this.actions.forEach(a => a.register(parentConfig, parentTask));
 
         return this;
     }
@@ -801,7 +808,7 @@ export class WatchAction extends AAction {
             }
         }, 500);
 
-        const matches = await Bluebird.map(Globby(this.patterns, { cwd: this.parentTask?.parentConfig?.path, absolute: true }), async path => ({
+        const matches = await Bluebird.map(Globby(this.patterns, { cwd: this.parentConfig?.path, absolute: true }), async path => ({
             path,
             stats: await FS.stat(path)
         }));
