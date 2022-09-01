@@ -730,7 +730,7 @@ export class DelegateAction extends AAction {
         }
 
         const vars = {
-            ...this.parentTask?.resolveVariables(),
+            ...(this.parentTask ?? this.parentConfig)?.resolveVariables(),
             ...execParams.vars
         }
 
