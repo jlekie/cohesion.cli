@@ -595,7 +595,7 @@ export class ExecAction extends AAction {
 
     public async exec(execParams: ExecParams) {
         const vars = {
-            ...await this.parentTask?.resolveVariables(),
+            ...await (this.parentTask ?? this.parentConfig)?.resolveVariables(),
             ...execParams.vars
         }
 
