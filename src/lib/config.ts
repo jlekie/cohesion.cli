@@ -639,7 +639,9 @@ export class LocalDelegateAction extends AAction {
     }
 
     public async exec(execParams: ExecParams) {
-        await (this.relative ? this.parentTask : this.parentConfig)?.exec([[this.task.split(' ')]], execParams);
+        const parsedArgs = parseArgs(this.task);
+
+        await (this.relative ? this.parentTask : this.parentConfig)?.exec(parsedArgs, execParams);
     }
 }
 
