@@ -42,11 +42,13 @@ export const ExecActionSchema = Zod.object({
 export interface LocalDelegateActionSchema {
     type: 'delegate.local';
     relative?: boolean;
+    parallel?: boolean;
     task: string | string[];
 }
 export const LocalDelegateActionSchema = Zod.object({
     type: Zod.literal('delegate.local'),
     relative: Zod.boolean().optional(),
+    parallel: Zod.boolean().optional(),
     task: Zod.union([
         Zod.string(),
         Zod.string().array()
@@ -616,12 +618,14 @@ export class ExecAction extends AAction {
 }
 
 export interface LocalDelegateActionParams {
-    relative: LocalDelegateAction['relative'];
+    relative?: LocalDelegateAction['relative'];
+    parallel?: DelegateAction['parallel'];
     task: LocalDelegateAction['task'];
 }
 export class LocalDelegateAction extends AAction {
     public readonly type = 'delegate.local';
     public relative: boolean;
+    public parallel: boolean;
     public task: string[];
 
     public static parse(value: unknown) {
@@ -632,7 +636,6 @@ export class LocalDelegateAction extends AAction {
 
         return new LocalDelegateAction({
             ...value,
-            relative: value.relative ?? false,
             task
         });
     }
@@ -640,16 +643,15 @@ export class LocalDelegateAction extends AAction {
     public constructor(params: LocalDelegateActionParams) {
         super();
 
-        this.relative = params.relative;
+        this.relative = params.relative ?? false;
+        this.parallel = params.parallel ?? false;
         this.task = params.task;
     }
 
     public async exec(execParams: ExecParams) {
-        for (const task of this.task) {
-            const parsedArgs = parseArgs(task);
+        const parsedArgs = parseArgs(this.task);
 
-            await (this.relative ? this.parentTask : this.parentConfig)?.exec(parsedArgs, execParams);
-        }
+        (this.parallel ? Bluebird.map : Bluebird.mapSeries)(parsedArgs, a => (this.relative ? this.parentTask : this.parentConfig)?.exec(a, execParams))
     }
 }
 
