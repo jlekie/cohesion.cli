@@ -42,12 +42,15 @@ export const ExecActionSchema = Zod.object({
 export interface LocalDelegateActionSchema {
     type: 'delegate.local';
     relative?: boolean;
-    task: string;
+    task: string | string[];
 }
 export const LocalDelegateActionSchema = Zod.object({
     type: Zod.literal('delegate.local'),
     relative: Zod.boolean().optional(),
-    task: Zod.string()
+    task: Zod.union([
+        Zod.string(),
+        Zod.string().array()
+    ])
 });
 
 export interface DelegateActionSchema {
@@ -271,7 +274,7 @@ export class Config {
             ...value,
             modules: value.modules ? (_.isArray(value.modules) ? value.modules.map(m => ModuleReference.fromSchema(m)) : [ ModuleReference.fromSchema(value.modules) ]) : undefined,
             tasks: value.tasks?.map(i => Task.fromSchema(i)),
-            actions: value.actions?.map(i => _.isString(i) ? new LocalDelegateAction({ relative: true, task: i }) : AAction.fromSchema(i)),
+            actions: value.actions?.map(i => _.isString(i) ? new LocalDelegateAction({ relative: true, task: [ i ] }) : AAction.fromSchema(i)),
             variableFiles: value.variableFiles?.map(i => VariableFileReference.fromSchema(i))
         });
 
@@ -450,7 +453,7 @@ export class Task {
         return new Task({
             ...value,
             parallel: value.parallel ?? false,
-            actions: value.actions?.map(i => _.isString(i) ? new LocalDelegateAction({ relative: true, task: i }) : AAction.fromSchema(i)),
+            actions: value.actions?.map(i => _.isString(i) ? new LocalDelegateAction({ relative: true, task: [ i ] }) : AAction.fromSchema(i)),
             tasks: value.tasks?.map(i => Task.fromSchema(i))
         });
     }
@@ -619,15 +622,18 @@ export interface LocalDelegateActionParams {
 export class LocalDelegateAction extends AAction {
     public readonly type = 'delegate.local';
     public relative: boolean;
-    public task: string;
+    public task: string[];
 
     public static parse(value: unknown) {
         return this.fromSchema(LocalDelegateActionSchema.parse(value));
     }
     public static fromSchema(value: Zod.infer<typeof LocalDelegateActionSchema>) {
+        const task = _.isString(value.task) ? [ value.task ] : value.task;
+
         return new LocalDelegateAction({
             ...value,
-            relative: value.relative ?? false
+            relative: value.relative ?? false,
+            task
         });
     }
 
@@ -639,9 +645,11 @@ export class LocalDelegateAction extends AAction {
     }
 
     public async exec(execParams: ExecParams) {
-        const parsedArgs = parseArgs(this.task);
+        for (const task of this.task) {
+            const parsedArgs = parseArgs(task);
 
-        await (this.relative ? this.parentTask : this.parentConfig)?.exec(parsedArgs, execParams);
+            await (this.relative ? this.parentTask : this.parentConfig)?.exec(parsedArgs, execParams);
+        }
     }
 }
 
