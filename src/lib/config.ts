@@ -651,7 +651,7 @@ export class LocalDelegateAction extends AAction {
     public async exec(execParams: ExecParams) {
         const parsedArgs = parseArgs(this.task);
 
-        (this.parallel ? Bluebird.map : Bluebird.mapSeries)(parsedArgs, a => (this.relative ? this.parentTask : this.parentConfig)?.exec(a, execParams))
+        await (this.parallel ? Bluebird.map : Bluebird.mapSeries)(parsedArgs, a => (this.relative ? this.parentTask : this.parentConfig)?.exec(a, execParams));
     }
 }
 
