@@ -104,7 +104,7 @@ export interface TaskSchema {
     parallel?: boolean;
     actions?: (Zod.infer<typeof ActionSchema> | string)[];
     tasks?: TaskSchema[];
-    variables?: Record<string, string>;
+    variables?: Record<string, string | null>;
     pathVariables?: Record<string, string>;
 }
 export const TaskSchema: Zod.ZodType<TaskSchema> = Zod.lazy(() => Zod.object({
@@ -112,7 +112,7 @@ export const TaskSchema: Zod.ZodType<TaskSchema> = Zod.lazy(() => Zod.object({
     parallel: Zod.boolean().optional(),
     actions: Zod.union([ ActionSchema, Zod.string() ]).array().optional(),
     tasks: TaskSchema.array().optional(),
-    variables: Zod.record(Zod.string(), Zod.string()).optional(),
+    variables: Zod.record(Zod.string(), Zod.string().nullable()).optional(),
     pathVariables: Zod.record(Zod.string(), Zod.string()).optional()
 }));
 
@@ -145,7 +145,7 @@ export const ConfigSchema = Zod.object({
     tasks: TaskSchema.array().optional(),
     actions: Zod.union([ ActionSchema, Zod.string() ]).array().optional(),
     dependencies: Zod.record(Zod.string(), Zod.string().array()).optional(),
-    variables: Zod.record(Zod.string(), Zod.string()).optional(),
+    variables: Zod.record(Zod.string(), Zod.string().nullable()).optional(),
     pathVariables: Zod.record(Zod.string(), Zod.string()).optional(),
     variableFiles: VariableFileReferenceSchema.array().optional()
 });
@@ -244,7 +244,7 @@ export class Config {
     public tasks: Task[];
     public actions: Action[];
     public dependencies: Record<string, string[]>;
-    public variables: Record<string, string>;
+    public variables: Record<string, string | null>;
     public pathVariables: Record<string, string>;
     public variableFiles: VariableFileReference[];
 
@@ -354,7 +354,7 @@ export class Config {
         // }
     }
 
-    public async resolveVariables(): Promise<Record<string, string>> {
+    public async resolveVariables(): Promise<Record<string, string | null>> {
         const pathVariables: Record<string, string> = {};
         for (const key in this.pathVariables)
             pathVariables[key] = Path.resolve(this.path ?? '.', this.pathVariables[key])
@@ -435,7 +435,7 @@ export class Task {
     public parallel: boolean;
     public actions: Action[];
     public tasks: Task[];
-    public variables: Record<string, string>;
+    public variables: Record<string, string | null>;
     public pathVariables: Record<string, string>;
 
     #parentConfig?: Config;
@@ -520,7 +520,7 @@ export class Task {
         }
     }
 
-    public async resolveVariables(): Promise<Record<string, string>> {
+    public async resolveVariables(): Promise<Record<string, string | null>> {
         const pathVariables: Record<string, string> = {};
         for (const key in this.pathVariables)
             pathVariables[key] = Path.resolve(this.#parentConfig?.path ?? '.', this.pathVariables[key])
