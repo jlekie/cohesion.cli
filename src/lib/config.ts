@@ -219,6 +219,7 @@ export class VariableFileReference {
             return {};
 
         const vars = _.reduce(await FS.readFile(path, 'utf8').then(content => Dotenv.parse(content)), (vars, value, key) => ({
+            ...vars,
             [`${this.prefix}${key}`]: value as string
         }), {} as Record<string, string>);
 
@@ -361,11 +362,11 @@ export class Config {
 
         return {
             ...this.variables,
-            ...pathVariables,
             ...await Bluebird.reduce(this.variableFiles, async (vars, ref) => ({
                 ...vars,
                 ...await ref.resolveVariables()
             }), {} as Record<string, string>),
+            ...pathVariables,
             ...await this.parentConfig?.resolveVariables()
         }
     }
