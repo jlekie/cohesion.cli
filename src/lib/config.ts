@@ -32,11 +32,13 @@ export interface ExecActionSchema {
     type: 'exec';
     cmd: string;
     requiredVariables?: string[];
+    ignoreExitCode?: boolean;
 }
 export const ExecActionSchema = Zod.object({
     type: Zod.literal('exec'),
     cmd: Zod.string(),
-    requiredVariables: Zod.string().array().optional()
+    requiredVariables: Zod.string().array().optional(),
+    ignoreExitCode: Zod.boolean().optional()
 });
 
 export interface LocalDelegateActionSchema {
@@ -577,11 +579,13 @@ export abstract class AAction {
 export interface ExecActionParams {
     cmd: ExecAction['cmd'];
     requiredVariables?: ExecAction['requiredVariables'];
+    ignoreExitCode?: ExecAction['ignoreExitCode'];
 }
 export class ExecAction extends AAction {
     public readonly type = 'exec';
     public cmd: string;
     public requiredVariables: string[]
+    public ignoreExitCode: boolean;
 
     public static parse(value: unknown) {
         return this.fromSchema(ExecActionSchema.parse(value));
@@ -597,6 +601,7 @@ export class ExecAction extends AAction {
 
         this.cmd = params.cmd;
         this.requiredVariables = params.requiredVariables ?? [];
+        this.ignoreExitCode = params.ignoreExitCode ?? false;
     }
 
     public async exec(execParams: ExecParams) {
@@ -613,6 +618,7 @@ export class ExecAction extends AAction {
         await exec(_.template(this.cmd)(vars), {
             cwd: this.parentConfig?.path,
             stdout: process.stdout,
+            ignoreExitCode: this.ignoreExitCode
             // label: this.cmd
         });
     }

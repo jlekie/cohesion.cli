@@ -20,10 +20,11 @@ export interface ExecOptions {
     stdout?: Stream.Writable;
     dryRun?: boolean;
     echo?: boolean;
+    ignoreExitCode?: boolean;
     label?: string;
 }
 
-export async function exec(cmd: string, { cwd, stdout, dryRun, echo = true, label }: ExecOptions = {}) {
+export async function exec(cmd: string, { cwd, stdout, dryRun, echo = true, ignoreExitCode = false, label }: ExecOptions = {}) {
     echo && stdout?.write(Chalk.gray(`${Chalk.cyan.bold(cmd)} [${Path.resolve(cwd ?? '.')}]\n`));
 
     if (dryRun)
@@ -42,7 +43,7 @@ export async function exec(cmd: string, { cwd, stdout, dryRun, echo = true, labe
         // proc.stdout.on('data', d => stdout?.write(d));
         // proc.stderr.on('data', d => stdout?.write(d));
 
-        proc.on('close', (code) => code !== 0 ? reject(new Error(`${cmd} <${Path.resolve(cwd ?? '.')}> Exited with code ${code}`)) : resolve());
+        proc.on('close', (code) => code !== 0 && !ignoreExitCode ? reject(new Error(`${cmd} <${Path.resolve(cwd ?? '.')}> Exited with code ${code}`)) : resolve());
         proc.on('error', (err) => reject(err));
     }).catch(err => {
         throw new Error(`Shell exec failed: ${err}`);
