@@ -142,7 +142,7 @@ export const ConfigSchema = Zod.object({
         ModuleReferenceSchema,
         ModuleReferenceSchema.array()
     ]).optional(),
-    labels: Zod.record(Zod.string(), Zod.string()).optional(),
+    labels: Zod.record(Zod.string(), Zod.union([ Zod.string(), Zod.string().array() ])).optional(),
     tags: Zod.string().array().optional(),
     tasks: TaskSchema.array().optional(),
     actions: Zod.union([ ActionSchema, Zod.string() ]).array().optional(),
@@ -242,7 +242,7 @@ export interface ConfigParams {
 }
 export class Config {
     public modules: ModuleReference[];
-    public labels: Record<string, string>;
+    public labels: Record<string, string[]>;
     public tags: string[];
     public tasks: Task[];
     public actions: Action[];
@@ -280,7 +280,8 @@ export class Config {
             modules: value.modules ? (_.isArray(value.modules) ? value.modules.map(m => ModuleReference.fromSchema(m)) : [ ModuleReference.fromSchema(value.modules) ]) : undefined,
             tasks: value.tasks?.map(i => Task.fromSchema(i)),
             actions: value.actions?.map(i => _.isString(i) ? new LocalDelegateAction({ relative: true, task: [ i ] }) : AAction.fromSchema(i)),
-            variableFiles: value.variableFiles?.map(i => VariableFileReference.fromSchema(i))
+            variableFiles: value.variableFiles?.map(i => VariableFileReference.fromSchema(i)),
+            labels: value.labels ? _.transform(value.labels, (memo, value, key) => memo[key] = _.isArray(value) ? value : [ value ], {} as Record<string, string[]>) : undefined
         });
 
         return config;
@@ -330,7 +331,7 @@ export class Config {
             config.labels = {
                 ...config.labels,
                 ...matchedFiles[match],
-                'cohesion:pathspec': Path.relative(this.path ?? '.', config.path ?? '.').replace('\\', '/')
+                'cohesion:pathspec': [ Path.relative(this.path ?? '.', config.path ?? '.').replace('\\', '/') ]
             };
 
             yield config;
@@ -719,7 +720,7 @@ export class DelegateAction extends AAction {
         }
 
         if (!_.isEmpty(dependencies)) {
-            const pathspecs = configs.map(c => c.labels['cohesion:pathspec']);
+            const pathspecs = configs.map(c => c.labels['cohesion:pathspec'][0]);
 
             const explodedDependencies: [string, string][] = [];
             for (const key in dependencies) {
@@ -734,8 +735,8 @@ export class DelegateAction extends AAction {
 
             const sortedPathspecs = Toposort(explodedDependencies).reverse();
             configs = _(configs)
-                .orderBy(c => sortedPathspecs.findIndex(p => p === c.labels['cohesion:pathspec']))
-                .filter(config => _.isEmpty(this.included) || _.every(this.included, (value, key) => _.some(value, v => v.every(vv => config.labels[key] === vv))))
+                .orderBy(c => sortedPathspecs.findIndex(p => p === c.labels['cohesion:pathspec'][0]))
+                .filter(config => _.isEmpty(this.included) || _.every(this.included, (value, key) => _.some(value, v => v.every(vv => config.labels[key]?.indexOf(vv) >= 0))))
                 .value();
 
             // configs = Toposort(explodedDependencies).reverse()
@@ -744,7 +745,7 @@ export class DelegateAction extends AAction {
         }
         else {
             configs = _(configs)
-                .filter(config => _.isEmpty(this.included) || _.every(this.included, (value, key) => _.some(value, v => v.every(vv => config.labels[key] === vv))))
+                .filter(config => _.isEmpty(this.included) || _.every(this.included, (value, key) => _.some(value, v => v.every(vv => config.labels[key]?.indexOf(vv) >= 0))))
                 .value();
         }
 
