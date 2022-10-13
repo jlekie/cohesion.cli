@@ -1,3 +1,5 @@
+import * as OS from 'os';
+
 import * as _ from 'lodash';
 import * as Bluebird from 'bluebird';
 
@@ -19,26 +21,36 @@ interface ConfigInitializer {
     name?: (config: Config) => string;
 }
 
-export type ActionSchema = ExecActionSchema | DelegateActionSchema | WatchActionSchema | LocalDelegateActionSchema | CopyActionSchema;
+export type ActionSchema = ExecActionSchema | DelegateActionSchema | WatchActionSchema | LocalDelegateActionSchema | CopyActionSchema | ReloadVariablesActionSchema;
 export const ActionSchema: Zod.ZodType<ActionSchema> = Zod.lazy(() => Zod.discriminatedUnion('type', [
     ExecActionSchema,
     DelegateActionSchema,
     WatchActionSchema,
     LocalDelegateActionSchema,
-    CopyActionSchema
+    CopyActionSchema,
+    ReloadVariablesActionSchema
 ]));
 
 export interface ExecActionSchema {
     type: 'exec';
-    cmd: string;
+    cmd?: string;
     requiredVariables?: string[];
     ignoreExitCode?: boolean;
+    commands?: Array<{
+        platforms?: string[],
+        cmd: string
+    }>;
 }
 export const ExecActionSchema = Zod.object({
     type: Zod.literal('exec'),
-    cmd: Zod.string(),
+    cmd: Zod.string().optional(),
     requiredVariables: Zod.string().array().optional(),
-    ignoreExitCode: Zod.boolean().optional()
+    ignoreExitCode: Zod.boolean().optional(),
+    platforms: Zod.string().array().optional(),
+    commands: Zod.object({
+        platforms: Zod.string().array().optional(),
+        cmd: Zod.string()
+    }).array().optional()
 });
 
 export interface LocalDelegateActionSchema {
@@ -99,6 +111,13 @@ export const CopyActionSchema = Zod.object({
     type: Zod.literal('copy'),
     source: Zod.string(),
     destination: Zod.string()
+});
+
+export interface ReloadVariablesActionSchema {
+    type: 'variables.reload';
+}
+export const ReloadVariablesActionSchema = Zod.object({
+    type: Zod.literal('variables.reload')
 });
 
 export interface TaskSchema {
@@ -320,7 +339,7 @@ export class Config {
         for (const modulePattern of this.modules) {
             const matches = await Globby(modulePattern.patterns);
             for (const match of matches)
-            matchedFiles[match] = _.defaults(matchedFiles[match] ?? {}, modulePattern.labels);
+                matchedFiles[match] = _.defaults(matchedFiles[match] ?? {}, modulePattern.labels);
         }
 
         for (const match in matchedFiles) {
@@ -370,7 +389,7 @@ export class Config {
                 ...await ref.resolveVariables()
             }), {} as Record<string, string>),
             ...pathVariables,
-            ...await this.parentConfig?.resolveVariables()
+            // ...await this.parentConfig?.resolveVariables()
         }
     }
 
@@ -563,6 +582,8 @@ export abstract class AAction {
             return LocalDelegateAction.fromSchema(value);
         else if (value.type === 'copy')
             return CopyAction.fromSchema(value);
+        else if (value.type === 'variables.reload')
+            return ReloadVariablesAction.fromSchema(value);
         else
             throw new Error('Could not parse action schema');
     }
@@ -577,23 +598,61 @@ export abstract class AAction {
     public abstract exec(execParams: ExecParams): void | Promise<void>;
 }
 
+export interface ReloadVariablesActionParams {
+}
+export class ReloadVariablesAction extends AAction {
+    public readonly type = 'variables.reload';
+
+    public static parse(value: unknown) {
+        return this.fromSchema(ReloadVariablesActionSchema.parse(value));
+    }
+    public static fromSchema(value: Zod.infer<typeof ReloadVariablesActionSchema>) {
+        return new ReloadVariablesAction({
+            ...value
+        });
+    }
+
+    public constructor(params: ReloadVariablesActionParams) {
+        super();
+    }
+
+    public async exec(execParams: ExecParams) {
+    }
+}
+
+export interface ExecCommand {
+    platforms?: string[];
+    cmd?: string;
+}
+
 export interface ExecActionParams {
-    cmd: ExecAction['cmd'];
+    cmd?: ExecAction['cmd'];
     requiredVariables?: ExecAction['requiredVariables'];
     ignoreExitCode?: ExecAction['ignoreExitCode'];
+    platforms?: ExecAction['platforms'];
+    commands?: ExecAction['commands'];
 }
 export class ExecAction extends AAction {
     public readonly type = 'exec';
-    public cmd: string;
+    public cmd?: string;
     public requiredVariables: string[]
     public ignoreExitCode: boolean;
+    public platforms?: string[];
+    public commands: Array<{
+        platforms?: string[];
+        cmd?: string;
+    }>;
 
     public static parse(value: unknown) {
         return this.fromSchema(ExecActionSchema.parse(value));
     }
     public static fromSchema(value: Zod.infer<typeof ExecActionSchema>) {
         return new ExecAction({
-            ...value
+            ...value,
+            commands: value.commands?.map(({ platforms, cmd }) => ({
+                platforms: platforms,
+                cmd: cmd
+            }))
         });
     }
 
@@ -603,6 +662,8 @@ export class ExecAction extends AAction {
         this.cmd = params.cmd;
         this.requiredVariables = params.requiredVariables ?? [];
         this.ignoreExitCode = params.ignoreExitCode ?? false;
+        this.platforms = params.platforms;
+        this.commands = params.commands ?? [];
     }
 
     public async exec(execParams: ExecParams) {
@@ -616,12 +677,22 @@ export class ExecAction extends AAction {
                 throw new Error(`Required variable ${requiredVariable} not defined`);
         }
 
-        await exec(_.template(this.cmd)(vars), {
-            cwd: this.parentConfig?.path,
-            stdout: process.stdout,
-            ignoreExitCode: this.ignoreExitCode
-            // label: this.cmd
-        });
+        const processCmd = async (command: ExecCommand) => {
+            if (command.platforms && command.platforms.indexOf(OS.platform()) < 0)
+                return;
+
+            if (command.cmd) {
+                await exec(_.template(command.cmd)(vars), {
+                    cwd: this.parentConfig?.path,
+                    stdout: process.stdout,
+                    ignoreExitCode: this.ignoreExitCode
+                });
+            }
+        }
+
+        await processCmd(this);
+        for (const command of this.commands)
+            await processCmd(command);
     }
 }
 
@@ -888,7 +959,7 @@ export class CopyAction extends AAction {
     }
 }
 
-export type Action = ExecAction | DelegateAction | WatchAction | LocalDelegateAction | CopyAction;
+export type Action = ExecAction | DelegateAction | WatchAction | LocalDelegateAction | CopyAction | ReloadVariablesAction;
 
 export async function loadConfig(path: string, params: { parentConfig?: Config, initializer?: ConfigInitializer } = {}) {
     const resolvedPath = Path.resolve(path);
