@@ -21,13 +21,14 @@ interface ConfigInitializer {
     name?: (config: Config) => string;
 }
 
-export type ActionSchema = ExecActionSchema | DelegateActionSchema | WatchActionSchema | LocalDelegateActionSchema | CopyActionSchema | ReloadVariablesActionSchema;
+export type ActionSchema = ExecActionSchema | DelegateActionSchema | WatchActionSchema | LocalDelegateActionSchema | CopyActionSchema | EmptyActionSchema | ReloadVariablesActionSchema;
 export const ActionSchema: Zod.ZodType<ActionSchema> = Zod.lazy(() => Zod.discriminatedUnion('type', [
     ExecActionSchema,
     DelegateActionSchema,
     WatchActionSchema,
     LocalDelegateActionSchema,
     CopyActionSchema,
+    EmptyActionSchema,
     ReloadVariablesActionSchema
 ]));
 
@@ -57,12 +58,14 @@ export interface LocalDelegateActionSchema {
     type: 'delegate.local';
     relative?: boolean;
     parallel?: boolean;
+    variables?: Record<string, string>;
     task: string | string[];
 }
 export const LocalDelegateActionSchema = Zod.object({
     type: Zod.literal('delegate.local'),
     relative: Zod.boolean().optional(),
     parallel: Zod.boolean().optional(),
+    variables: Zod.record(Zod.string(), Zod.string()).optional(),
     task: Zod.union([
         Zod.string(),
         Zod.string().array()
@@ -111,6 +114,15 @@ export const CopyActionSchema = Zod.object({
     type: Zod.literal('copy'),
     source: Zod.string(),
     destination: Zod.string()
+});
+
+export interface EmptyActionSchema {
+    type: 'fs.empty';
+    path: string;
+}
+export const EmptyActionSchema = Zod.object({
+    type: Zod.literal('fs.empty'),
+    path: Zod.string()
 });
 
 export interface ReloadVariablesActionSchema {
@@ -582,6 +594,8 @@ export abstract class AAction {
             return LocalDelegateAction.fromSchema(value);
         else if (value.type === 'copy')
             return CopyAction.fromSchema(value);
+        else if (value.type === 'fs.empty')
+            return EmptyAction.fromSchema(value);
         else if (value.type === 'variables.reload')
             return ReloadVariablesAction.fromSchema(value);
         else
@@ -698,13 +712,15 @@ export class ExecAction extends AAction {
 
 export interface LocalDelegateActionParams {
     relative?: LocalDelegateAction['relative'];
-    parallel?: DelegateAction['parallel'];
+    parallel?: LocalDelegateAction['parallel'];
+    variables?: LocalDelegateAction['variables'];
     task: LocalDelegateAction['task'];
 }
 export class LocalDelegateAction extends AAction {
     public readonly type = 'delegate.local';
     public relative: boolean;
     public parallel: boolean;
+    public variables: Record<string, string>;
     public task: string[];
 
     public static parse(value: unknown) {
@@ -724,13 +740,28 @@ export class LocalDelegateAction extends AAction {
 
         this.relative = params.relative ?? false;
         this.parallel = params.parallel ?? false;
+        this.variables = params.variables ?? {};
         this.task = params.task;
     }
 
     public async exec(execParams: ExecParams) {
         const parsedArgs = parseArgs(this.task);
 
-        await (this.parallel ? Bluebird.map : Bluebird.mapSeries)(parsedArgs, a => (this.relative ? this.parentTask : this.parentConfig)?.exec(a, execParams));
+        const vars = {
+            ...await (this.parentTask ?? this.parentConfig)?.resolveVariables(),
+            ...execParams.vars
+        }
+
+        const forwardedVars: Record<string, string> = {};
+        for (const key in this.variables)
+            forwardedVars[key] = _.template(this.variables[key])(vars);
+
+        await (this.parallel ? Bluebird.map : Bluebird.mapSeries)(parsedArgs, a => (this.relative ? this.parentTask : this.parentConfig)?.exec(a, {
+            vars: {
+                ...execParams.vars,
+                ...forwardedVars
+            }
+        }));
     }
 }
 
@@ -959,7 +990,37 @@ export class CopyAction extends AAction {
     }
 }
 
-export type Action = ExecAction | DelegateAction | WatchAction | LocalDelegateAction | CopyAction | ReloadVariablesAction;
+export interface EmptyActionParams {
+    path: EmptyAction['path'];
+}
+export class EmptyAction extends AAction {
+    public readonly type = 'fs.empty';
+    public path: string;
+
+    public static parse(value: unknown) {
+        return this.fromSchema(EmptyActionSchema.parse(value));
+    }
+    public static fromSchema(value: Zod.infer<typeof EmptyActionSchema>): EmptyAction {
+        return new EmptyAction({
+            ...value
+        });
+    }
+
+    public constructor(params: EmptyActionParams) {
+        super();
+
+        this.path = params.path;
+    }
+
+    public async exec(execParams: ExecParams) {
+        const path = Path.resolve(this.parentConfig?.path ?? '.', this.path);
+
+        await FS.emptyDir(path);
+        console.log(`Emptied ${path}`);
+    }
+}
+
+export type Action = ExecAction | DelegateAction | WatchAction | LocalDelegateAction | CopyAction | EmptyAction | ReloadVariablesAction;
 
 export async function loadConfig(path: string, params: { parentConfig?: Config, initializer?: ConfigInitializer } = {}) {
     const resolvedPath = Path.resolve(path);
