@@ -15,6 +15,9 @@ import * as Toposort from 'toposort';
 
 import * as Dotenv from 'dotenv';
 
+import * as Stream from 'stream';
+import * as Chalk from 'chalk';
+
 import { exec } from './misc';
 
 interface ConfigInitializer {
@@ -201,6 +204,7 @@ export function parseArgs(args: string | string[]): string[][][] | string[][][][
 }
 
 export interface ExecParams {
+    stdout?: Stream.Writable;
     vars: Record<string, string>;
 }
 
@@ -490,7 +494,7 @@ export class Task {
         return new Task({
             ...value,
             parallel: value.parallel ?? false,
-            actions: value.actions?.map(i => _.isString(i) ? new LocalDelegateAction({ relative: true, task: [ i ] }) : AAction.fromSchema(i)),
+            actions: value.actions?.map(i => _.isString(i) ? new ExecAction({ cmd: i }) : AAction.fromSchema(i)),
             tasks: value.tasks?.map(i => Task.fromSchema(i))
         });
     }
@@ -537,19 +541,26 @@ export class Task {
         }
         else {
             if (this.parallel) {
-                if (this.actions.length)
+                if (this.actions.length) {
+                    execParams.stdout?.write(`[${Chalk.blue(this.resolveFqn())}] Executing actions... ${Chalk.gray(this.parentConfig?.path)}\n`);
                     await Bluebird.map(this.actions, action => action.exec(execParams));
-                else
+                }
+                else {
                     await Bluebird.map(this.tasks, task => task.exec([], execParams));
+                }
             }
             else {
                 if (this.actions.length) {
-                    for (const action of this.actions)
+                    execParams.stdout?.write(`[${Chalk.blue(this.resolveFqn())}] Executing actions... ${Chalk.gray(this.parentConfig?.path)}\n`);
+
+                    for (const action of this.actions) {
                         await action.exec(execParams);
+                    }
                 }
                 else {
-                    for (const task of this.tasks)
+                    for (const task of this.tasks) {
                         await task.exec([], execParams);
+                    }
                 }
             }
         }
@@ -565,7 +576,11 @@ export class Task {
             ...pathVariables,
             ...await this.parentTask?.resolveVariables(),
             ...await this.parentConfig?.resolveVariables()
-        }
+        };
+    }
+
+    public resolveFqn(): string {
+        return this.parentTask ? `${this.parentTask.resolveFqn()}.${this.name}` : this.name;
     }
 }
 
@@ -699,7 +714,8 @@ export class ExecAction extends AAction {
                 await exec(_.template(command.cmd)(vars), {
                     cwd: this.parentConfig?.path,
                     stdout: process.stdout,
-                    ignoreExitCode: this.ignoreExitCode
+                    ignoreExitCode: this.ignoreExitCode,
+                    label: '[' + Chalk.blue(this.parentTask?.resolveFqn()) + ']'
                 });
             }
         }
@@ -757,6 +773,7 @@ export class LocalDelegateAction extends AAction {
             forwardedVars[key] = _.template(this.variables[key])(vars);
 
         await (this.parallel ? Bluebird.map : Bluebird.mapSeries)(parsedArgs, a => (this.relative ? this.parentTask : this.parentConfig)?.exec(a, {
+            ...execParams,
             vars: {
                 ...execParams.vars,
                 ...forwardedVars
@@ -978,7 +995,7 @@ export class CopyAction extends AAction {
 
     public async exec(execParams: ExecParams) {
         await FS.copyFile(this.source, this.destination);
-        console.log(`Copied ${this.source} to ${this.destination}`);
+        console.log(`[${Chalk.blue(this.parentTask?.resolveFqn())}] Copied ${this.source} to ${this.destination}`);
 
         // if (this.destination.endsWith('/') || this.destination.endsWith('\\')) {
         //     const matches = await Globby(this.source, { cwd: this.parentTask?.parentConfig?.path });
@@ -1013,10 +1030,15 @@ export class EmptyAction extends AAction {
     }
 
     public async exec(execParams: ExecParams) {
-        const path = Path.resolve(this.parentConfig?.path ?? '.', this.path);
+        const vars = {
+            ...await (this.parentTask ?? this.parentConfig)?.resolveVariables(),
+            ...execParams.vars
+        }
+
+        const path = Path.resolve(this.parentConfig?.path ?? '.', _.template(this.path)(vars));
 
         await FS.emptyDir(path);
-        console.log(`Emptied ${path}`);
+        console.log(`[${Chalk.blue(this.parentTask?.resolveFqn())}] Emptied ${path}`);
     }
 }
 

@@ -51,13 +51,15 @@ class DefaultCommand extends Command {
             for (const arg of this.args) {
                 const parsedArgs = parseArgs(arg)
                 await config.exec(parsedArgs, {
-                    vars
+                    vars,
+                    stdout: this.context.stdout
                 });
             }
         }
         else {
             await config.exec([], {
-                vars
+                vars,
+                stdout: this.context.stdout
             });
         }
     }

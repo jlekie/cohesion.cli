@@ -25,7 +25,7 @@ export interface ExecOptions {
 }
 
 export async function exec(cmd: string, { cwd, stdout, dryRun, echo = true, ignoreExitCode = false, label }: ExecOptions = {}) {
-    echo && stdout?.write(Chalk.gray(`${Chalk.cyan.bold(cmd)} [${Path.resolve(cwd ?? '.')}]\n`));
+    echo && stdout?.write(Chalk.gray(`${label ? label + ' ' : ''}${Chalk.cyan.bold(cmd)} [${Path.resolve(cwd ?? '.')}]\n`));
 
     if (dryRun)
         return;
@@ -49,8 +49,8 @@ export async function exec(cmd: string, { cwd, stdout, dryRun, echo = true, igno
         throw new Error(`Shell exec failed: ${err}`);
     });
 }
-export async function execCmd(cmd: string, { cwd, stdout, dryRun, echo = true, trim = true }: ExecOptions & { trim?: boolean } = {}) {
-    echo && stdout?.write(Chalk.gray(`${Chalk.cyan(cmd)} [${Path.resolve(cwd ?? '.')}]\n`));
+export async function execCmd(cmd: string, { cwd, stdout, dryRun, echo = true, trim = true, label }: ExecOptions & { trim?: boolean } = {}) {
+    echo && stdout?.write(Chalk.gray(`${label ? label + ' ' : ''}${Chalk.cyan(cmd)} [${Path.resolve(cwd ?? '.')}]\n`));
 
     // if (dryRun)
     //     return '';
