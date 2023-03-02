@@ -205,6 +205,7 @@ export function parseArgs(args: string | string[]): string[][][] | string[][][][
 
 export interface ExecParams {
     stdout?: Stream.Writable;
+    label?: string;
     vars: Record<string, string>;
 }
 
@@ -554,12 +555,18 @@ export class Task {
                     execParams.stdout?.write(`[${Chalk.blue(this.resolveFqn())}] Executing actions... ${Chalk.gray(this.parentConfig?.path)}\n`);
 
                     for (const action of this.actions) {
-                        await action.exec(execParams);
+                        await action.exec({
+                            ...execParams,
+                            label: `${execParams.label ? execParams.label + '.' : ''}${this.name}`
+                        });
                     }
                 }
                 else {
                     for (const task of this.tasks) {
-                        await task.exec([], execParams);
+                        await task.exec([], {
+                            ...execParams,
+                            label: `${execParams.label ? execParams.label + '.' : ''}${this.name}`
+                        });
                     }
                 }
             }
@@ -654,6 +661,18 @@ export interface ExecCommand {
     cmd?: string;
 }
 
+const colors = [ 'red', 'green', 'blue', 'magenta', 'cyan' ];
+let colorIdx = 0;
+function resolveColorIdx() {
+    if (colorIdx < colors.length) {
+        return colorIdx++;
+    }
+    else {
+        colorIdx = 0;
+        return colorIdx;
+    }
+}
+
 export interface ExecActionParams {
     cmd?: ExecAction['cmd'];
     requiredVariables?: ExecAction['requiredVariables'];
@@ -671,6 +690,8 @@ export class ExecAction extends AAction {
         platforms?: string[];
         cmd?: string;
     }>;
+
+    #colorIdx: number;
 
     public static parse(value: unknown) {
         return this.fromSchema(ExecActionSchema.parse(value));
@@ -693,6 +714,8 @@ export class ExecAction extends AAction {
         this.ignoreExitCode = params.ignoreExitCode ?? false;
         this.platforms = params.platforms;
         this.commands = params.commands ?? [];
+
+        this.#colorIdx = resolveColorIdx();
     }
 
     public async exec(execParams: ExecParams) {
@@ -715,7 +738,7 @@ export class ExecAction extends AAction {
                     cwd: this.parentConfig?.path,
                     stdout: process.stdout,
                     ignoreExitCode: this.ignoreExitCode,
-                    label: '[' + Chalk.blue(this.parentTask?.resolveFqn()) + ']'
+                    label: execParams.label ? '[' + Chalk.keyword(colors[this.#colorIdx])(execParams.label) + ']' : undefined
                 });
             }
         }
@@ -886,6 +909,8 @@ export class DelegateAction extends AAction {
 
             if (this.parallel) {
                 await Bluebird.map(configs, config => config.exec(parsedArgs, {
+                    ...execParams,
+                    label: `${execParams.label ? execParams.label + '.' : ''}${config.name}`,
                     vars: {
                         ...execParams.vars,
                         ...forwardedVars
@@ -894,6 +919,8 @@ export class DelegateAction extends AAction {
             }
             else {
                 await Bluebird.mapSeries(configs, config => config.exec(parsedArgs, {
+                    ...execParams,
+                    label: `${execParams.label ? execParams.label + '.' : ''}${config.name}`,
                     vars: {
                         ...execParams.vars,
                         ...forwardedVars
