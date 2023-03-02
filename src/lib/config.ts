@@ -661,7 +661,7 @@ export interface ExecCommand {
     cmd?: string;
 }
 
-const colors = [ 'red', 'green', 'blue', 'magenta', 'cyan' ];
+const colors = [ '#570600', '#575100', '#305700', '#00574b', '#002b57', '#280057', '#570037' ];
 let colorIdx = 0;
 function resolveColorIdx() {
     if (colorIdx < colors.length) {
@@ -738,7 +738,7 @@ export class ExecAction extends AAction {
                     cwd: this.parentConfig?.path,
                     stdout: process.stdout,
                     ignoreExitCode: this.ignoreExitCode,
-                    label: execParams.label ? '[' + Chalk.keyword(colors[this.#colorIdx])(execParams.label) + ']' : undefined
+                    label: execParams.label ? '[' + Chalk.hex(colors[this.#colorIdx])(execParams.label) + ']' : undefined
                 });
             }
         }
