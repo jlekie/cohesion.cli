@@ -1,4 +1,7 @@
 import * as OS from 'os';
+import * as Url from 'url';
+
+import Axios from 'axios';
 
 import * as _ from 'lodash';
 import * as Bluebird from 'bluebird';
@@ -18,13 +21,15 @@ import * as Dotenv from 'dotenv';
 import * as Stream from 'stream';
 import * as Chalk from 'chalk';
 
+import * as Tmp from 'tmp-promise';
+
 import { exec } from './misc';
 
 interface ConfigInitializer {
     name?: (config: Config) => string;
 }
 
-export type ActionSchema = ExecActionSchema | DelegateActionSchema | WatchActionSchema | LocalDelegateActionSchema | CopyActionSchema | EmptyActionSchema | ReloadVariablesActionSchema;
+export type ActionSchema = ExecActionSchema | DelegateActionSchema | WatchActionSchema | LocalDelegateActionSchema | CopyActionSchema | EmptyActionSchema | ReloadVariablesActionSchema | DenoActionSchema;
 export const ActionSchema: Zod.ZodType<ActionSchema> = Zod.lazy(() => Zod.discriminatedUnion('type', [
     ExecActionSchema,
     DelegateActionSchema,
@@ -32,7 +37,8 @@ export const ActionSchema: Zod.ZodType<ActionSchema> = Zod.lazy(() => Zod.discri
     LocalDelegateActionSchema,
     CopyActionSchema,
     EmptyActionSchema,
-    ReloadVariablesActionSchema
+    ReloadVariablesActionSchema,
+    DenoActionSchema
 ]));
 
 export interface ExecActionSchema {
@@ -133,6 +139,33 @@ export interface ReloadVariablesActionSchema {
 }
 export const ReloadVariablesActionSchema = Zod.object({
     type: Zod.literal('variables.reload')
+});
+
+export interface DenoActionSchema {
+    type: 'deno';
+    permissions?: {
+        allowEnv?: boolean;
+        allowRead?: boolean;
+        allowWrite?: boolean;
+    };
+    script: string | { inline: string } | { uri: string };
+}
+export const DenoActionSchema = Zod.object({
+    type: Zod.literal('deno'),
+    permissions: Zod.object({
+        allowEnv: Zod.boolean().optional(),
+        allowRead: Zod.boolean().optional(),
+        allowWrite: Zod.boolean().optional()
+    }).optional(),
+    script: Zod.union([
+        Zod.string(),
+        Zod.object({
+            inline: Zod.string()
+        }),
+        Zod.object({
+            uri: Zod.string()
+        })
+    ])
 });
 
 export interface TaskSchema {
@@ -315,7 +348,7 @@ export class Config {
             ...value,
             modules: value.modules ? (_.isArray(value.modules) ? value.modules.map(m => ModuleReference.fromSchema(m)) : [ ModuleReference.fromSchema(value.modules) ]) : undefined,
             tasks: value.tasks?.map(i => Task.fromSchema(i)),
-            actions: value.actions?.map(i => _.isString(i) ? new LocalDelegateAction({ relative: true, task: [ i ] }) : AAction.fromSchema(i)),
+            actions: value.actions?.map(i => _.isString(i) ? new ExecAction({ cmd: i }) : AAction.fromSchema(i)),
             variableFiles: value.variableFiles?.map(i => VariableFileReference.fromSchema(i)),
             labels: value.labels ? _.transform(value.labels, (memo, value, key) => memo[key] = _.isArray(value) ? value : [ value ], {} as Record<string, string[]>) : undefined
         });
@@ -523,7 +556,10 @@ export class Task {
         if (args.length) {
             await Bluebird.map(args[0], async parg => {
                 await Bluebird.mapSeries(parg, async sarg => {
-                    await this.tasks.find(t => t.name === sarg)?.exec(args.slice(1), execParams);
+                    await this.tasks.find(t => t.name === sarg)?.exec(args.slice(1), {
+                        ...execParams,
+                        label: `${execParams.label ? execParams.label + '.' : ''}${this.name}`
+                    });
                 });
             });
 
@@ -543,16 +579,22 @@ export class Task {
         else {
             if (this.parallel) {
                 if (this.actions.length) {
-                    execParams.stdout?.write(`[${Chalk.blue(this.resolveFqn())}] Executing actions... ${Chalk.gray(this.parentConfig?.path)}\n`);
-                    await Bluebird.map(this.actions, action => action.exec(execParams));
+                    // execParams.stdout?.write(`[${Chalk.blue(this.resolveFqn())}] Executing actions... ${Chalk.gray(this.parentConfig?.path)}\n`);
+                    await Bluebird.map(this.actions, action => action.exec({
+                        ...execParams,
+                        label: `${execParams.label ? execParams.label + '.' : ''}${this.name}`
+                    }));
                 }
                 else {
-                    await Bluebird.map(this.tasks, task => task.exec([], execParams));
+                    await Bluebird.map(this.tasks, task => task.exec([], {
+                        ...execParams,
+                        label: `${execParams.label ? execParams.label + '.' : ''}${this.name}`
+                    }));
                 }
             }
             else {
                 if (this.actions.length) {
-                    execParams.stdout?.write(`[${Chalk.blue(this.resolveFqn())}] Executing actions... ${Chalk.gray(this.parentConfig?.path)}\n`);
+                    // execParams.stdout?.write(`[${Chalk.blue(this.resolveFqn())}] Executing actions... ${Chalk.gray(this.parentConfig?.path)}\n`);
 
                     for (const action of this.actions) {
                         await action.exec({
@@ -620,6 +662,8 @@ export abstract class AAction {
             return EmptyAction.fromSchema(value);
         else if (value.type === 'variables.reload')
             return ReloadVariablesAction.fromSchema(value);
+        else if (value.type === 'deno')
+            return DenoAction.fromSchema(value);
         else
             throw new Error('Could not parse action schema');
     }
@@ -797,6 +841,7 @@ export class LocalDelegateAction extends AAction {
 
         await (this.parallel ? Bluebird.map : Bluebird.mapSeries)(parsedArgs, a => (this.relative ? this.parentTask : this.parentConfig)?.exec(a, {
             ...execParams,
+            label: undefined,
             vars: {
                 ...execParams.vars,
                 ...forwardedVars
@@ -910,7 +955,7 @@ export class DelegateAction extends AAction {
             if (this.parallel) {
                 await Bluebird.map(configs, config => config.exec(parsedArgs, {
                     ...execParams,
-                    label: `${execParams.label ? execParams.label + '.' : ''}${config.name}`,
+                    label: `${execParams.label ? execParams.label + '/' : ''}${config.name}`,
                     vars: {
                         ...execParams.vars,
                         ...forwardedVars
@@ -920,7 +965,7 @@ export class DelegateAction extends AAction {
             else {
                 await Bluebird.mapSeries(configs, config => config.exec(parsedArgs, {
                     ...execParams,
-                    label: `${execParams.label ? execParams.label + '.' : ''}${config.name}`,
+                    label: `${execParams.label ? execParams.label + '/' : ''}${config.name}`,
                     vars: {
                         ...execParams.vars,
                         ...forwardedVars
@@ -1069,12 +1114,105 @@ export class EmptyAction extends AAction {
     }
 }
 
-export type Action = ExecAction | DelegateAction | WatchAction | LocalDelegateAction | CopyAction | EmptyAction | ReloadVariablesAction;
+export interface DenoPermissions {
+    allowRead?: boolean;
+    allowWrite?: boolean;
+    allowEnv?: boolean;
+}
 
-export async function loadConfig(path: string, params: { parentConfig?: Config, initializer?: ConfigInitializer } = {}) {
-    const resolvedPath = Path.resolve(path);
+export interface DenoActionParams {
+    permissions?: DenoPermissions;
+    script: string | { inline: string } | { uri: string };
+}
+export class DenoAction extends AAction {
+    public readonly type = 'deno';
 
-    return FS.readFile(path, 'utf8')
-        .then(content => Yaml.load(content))
-        .then(hash => Config.parse(hash).register(Path.dirname(resolvedPath), params));
+    public permissions: DenoPermissions;
+    public script: string | { inline: string } | { uri: string };
+
+    #colorIdx: number;
+
+    public static parse(value: unknown) {
+        return this.fromSchema(DenoActionSchema.parse(value));
+    }
+    public static fromSchema(value: Zod.infer<typeof DenoActionSchema>): DenoAction {
+        return new DenoAction({
+            ...value,
+            permissions: value.permissions && { ...value.permissions }
+        });
+    }
+
+    public constructor(params: DenoActionParams) {
+        super();
+
+        this.permissions = params.permissions ?? {};
+        this.script = params.script;
+
+        this.#colorIdx = resolveColorIdx();
+    }
+
+    public async exec(execParams: ExecParams) {
+        // const execScript = async (path: string) => {
+        //     const permissionArgs = [];
+        //     this.permissions.allowEnv && permissionArgs.push('--allow-env');
+        //     this.permissions.allowRead && permissionArgs.push('--allow-read');
+        //     this.permissions.allowWrite && permissionArgs.push('--allow-write');
+
+        //     await exec(`deno run ${permissionArgs.join(' ')} ${path}`, {
+        //         cwd: this.parentConfig?.path,
+        //         stdout: process.stdout,
+        //         label: execParams.label ? '[' + Chalk.hex(colors[this.#colorIdx])(execParams.label) + ']' : undefined
+        //     });
+        // }
+
+        // if ('inline' in this.script) {
+        //     const script = this.script.inline;
+
+        //     await Tmp.file({
+        //         postfix: '.ts'
+        //     }).then(async ({ path, cleanup }) => {
+        //         await FS.writeFile(path, script);
+
+        //         execScript(path);
+    
+        //         await cleanup();
+        //     });
+        // }
+        // else {
+
+        // }
+    }
+}
+
+export type Action = ExecAction | DelegateAction | WatchAction | LocalDelegateAction | CopyAction | EmptyAction | ReloadVariablesAction | DenoAction;
+
+export async function loadConfig(uri: string, params: { parentConfig?: Config, initializer?: ConfigInitializer } = {}) {
+    if (Zod.string().url().safeParse(uri).success) {
+        const [ protocol, path ] = uri.split('://');
+
+        switch (protocol) {
+            case 'http':
+            case 'https': {
+                return Axios.get(uri)
+                    .then(response => Yaml.load(response.data))
+                    .then(hash => Config.parse(hash).register(process.cwd(), params));
+            }
+            case 'file': {
+                const resolvedPath = Path.resolve(path);
+
+                return FS.readFile(resolvedPath, 'utf8')
+                    .then(content => Yaml.load(content))
+                    .then(hash => Config.parse(hash).register(Path.dirname(resolvedPath), params));
+            }
+            default:
+                throw new Error(`unsupported config URI [${uri}]`);
+        }
+    }
+    else {
+        const resolvedPath = Path.resolve(uri);
+
+        return FS.readFile(resolvedPath, 'utf8')
+            .then(content => Yaml.load(content))
+            .then(hash => Config.parse(hash).register(Path.dirname(resolvedPath), params));
+    }
 }

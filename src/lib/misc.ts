@@ -28,6 +28,7 @@ class Test extends Stream.Transform {
     private readonly label: string;
 
     private inProgress: boolean = false;
+    private endsInNewline: boolean = false;
 
     public constructor(label: string, options?: Stream.TransformOptions) {
         super(options)
@@ -37,8 +38,16 @@ class Test extends Stream.Transform {
 
     public override _transform(chunk: any, encoding: BufferEncoding, callback: Stream.TransformCallback): void {
         // this.push(chunk.toString().split(/(?:\r\n|\r|\n)/g).map((p: string) => this.label + p).join('\n'))
-        this.push((!this.inProgress ? this.label : '') + chunk.toString().replace(/(?:\r\n|\r|\n)/gm, `\n${this.label}: `));
+        const chunkString = chunk.toString() as string;
+        this.push((!this.inProgress ? this.label + ' ' : '') + chunkString.replace(/(?:\r\n|\r|\n)/gm, `\n${this.label} `));
         this.inProgress = true;
+        this.endsInNewline = chunkString.endsWith('\n') || chunkString.endsWith('\r') || chunkString.endsWith('\r\n');
+
+        callback();
+    }
+    public override _final(callback: (error?: Error | null | undefined) => void): void {
+        if (this.endsInNewline)
+            this.push('\n');
 
         callback();
     }
