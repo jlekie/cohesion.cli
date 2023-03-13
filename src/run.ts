@@ -3,7 +3,7 @@ import 'source-map-support/register';
 
 import * as _ from 'lodash';
 import { Builtins, Cli, Command, Option } from 'clipanion';
-import { loadConfig, parseArgs } from './lib/config';
+import { loadApp, parseArgs, Config } from '.';
 
 const [ node, app, ...args ] = process.argv;
 
@@ -17,7 +17,7 @@ class ViewCommand extends Command {
         if (this.cwd)
             process.chdir(this.cwd);
 
-        const config = await loadConfig(this.config);
+        const config = await Config.loadConfig(this.config);
 
         console.log(config);
         for await (const subConfig of config.resolveConfigs())
@@ -39,7 +39,8 @@ class DefaultCommand extends Command {
         if (this.cwd)
             process.chdir(this.cwd);
 
-        const config = await loadConfig(this.config);
+        const config = await Config.loadConfig(this.config);
+        const app = await loadApp(config);
         // console.log(config)
 
         // for await (const childConfig of config.resolveConfigs())
@@ -50,14 +51,14 @@ class DefaultCommand extends Command {
         if (this.args.length) {
             for (const arg of this.args) {
                 const parsedArgs = parseArgs(arg)
-                await config.exec(parsedArgs, {
+                await app.exec(parsedArgs, {
                     vars,
                     stdout: this.context.stdout
                 });
             }
         }
         else {
-            await config.exec([], {
+            await app.exec([], {
                 vars,
                 stdout: this.context.stdout
             });
@@ -68,7 +69,7 @@ class DefaultCommand extends Command {
 const cli = new Cli({
     binaryName: '[ cohesion, co ]',
     binaryLabel: 'Cohesion',
-    binaryVersion: '1.0.0-alpha.9'
+    binaryVersion: '2.0.0-alpha.0'
 });
 
 cli.register(ViewCommand);
