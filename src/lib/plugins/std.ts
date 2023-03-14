@@ -106,11 +106,16 @@ export const FSEmptyTypeDef = typeDef('compiledParsed', Type.Object({
 }));
 
 export const DenoTypeDef = typeDef('compiledParsed', Type.Object({
-    permissions: Type.Optional(Type.Object({
+    permissions: Type.Optional(Type.Union([ Type.Literal(true), Type.Object({
         allowEnv: Type.Optional(Type.Boolean()),
         allowRead: Type.Optional(Type.Boolean()),
-        allowWrite: Type.Optional(Type.Boolean())
-    })),
+        allowWrite: Type.Optional(Type.Boolean()),
+        allowSys: Type.Optional(Type.Boolean()),
+        allowHrTime: Type.Optional(Type.Boolean()),
+        allowNet: Type.Optional(Type.Boolean()),
+        allowFfi: Type.Optional(Type.Boolean()),
+        allowRun: Type.Optional(Type.Boolean()),
+    }) ])),
     script: Type.Union([
         Type.String(),
         Type.Object({
@@ -121,10 +126,15 @@ export const DenoTypeDef = typeDef('compiledParsed', Type.Object({
         })
     ])
 }), value => ({
-    permissions: {
+    permissions: value.permissions === true ? true : {
         allowEnv: value.permissions?.allowEnv ?? false,
         allowRead: value.permissions?.allowRead ?? false,
         allowWrite: value.permissions?.allowWrite ?? false,
+        allowSys: value.permissions?.allowSys ?? false,
+        allowHrTime: value.permissions?.allowHrTime ?? false,
+        allowNet: value.permissions?.allowNet ?? false,
+        allowFfi: value.permissions?.allowFfi ?? false,
+        allowRun: value.permissions?.allowRun ?? false,
     },
     script: typeof value.script === 'string' ? { inline: value.script } : value.script
 }));
@@ -326,9 +336,19 @@ export default {
 
             const execScript = async (path: string) => {
                 const permissionArgs = [];
-                options.permissions.allowEnv && permissionArgs.push('--allow-env');
-                options.permissions.allowRead && permissionArgs.push('--allow-read');
-                options.permissions.allowWrite && permissionArgs.push('--allow-write');
+                if (typeof options.permissions === 'boolean') {
+                    options.permissions && permissionArgs.push('--allow-all');
+                }
+                else {
+                    options.permissions.allowEnv && permissionArgs.push('--allow-env');
+                    options.permissions.allowRead && permissionArgs.push('--allow-read');
+                    options.permissions.allowWrite && permissionArgs.push('--allow-write');
+                    options.permissions.allowSys && permissionArgs.push('--allow-allowSys');
+                    options.permissions.allowHrTime && permissionArgs.push('--allow-hrtime');
+                    options.permissions.allowNet && permissionArgs.push('--allow-net');
+                    options.permissions.allowFfi && permissionArgs.push('--allow-ffi');
+                    options.permissions.allowRun && permissionArgs.push('--allow-run');
+                }
 
                 await exec(`deno run ${permissionArgs.join(' ')} ${path}`, {
                     cwd: action.parentApp.path,
