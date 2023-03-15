@@ -24,7 +24,7 @@ import * as Chalk from 'chalk';
 import * as Tmp from 'tmp-promise';
 
 import { Type } from '@sinclair/typebox';
-import { typeDef } from './types';
+import { typeDef, parsedTypeDef, compiledParsedTypeDef } from './types';
 
 // import * as Types from './types';
 
@@ -117,19 +117,20 @@ export const PluginTypeDef = typeDef('parsed', Type.Object({
     });
 });
 
-export const TaskTypeDef = typeDef('parsed', Type.Recursive(Task => Type.Object({
+const TaskType = Type.Recursive(Task => Type.Object({
     name: Type.String(),
     parallel: Type.Optional(Type.Boolean()),
     actions: Type.Optional(Type.Array(Type.Union([ ActionTypeDef.Schema(), Type.String() ]))),
     tasks: Type.Optional(Type.Array(Task)),
     variables: Type.Optional(Type.Record(Type.String(), Type.Union([ Type.String(), Type.Null() ]))),
     pathVariables: Type.Optional(Type.Record(Type.String(), Type.String()))
-})), (value, TaskTypeDef) => {
+}));
+export const TaskTypeDef = compiledParsedTypeDef<typeof TaskType, Task>(TaskType, (value, TT) => {
     return new Task({
         ...value,
         parallel: value.parallel ?? false,
         actions: value.actions?.map(i => _.isString(i) ? new Action({ type: 'exec' }) : ActionTypeDef.parse(i)),
-        tasks: value.tasks?.map(i => TaskTypeDef.parse(i))
+        tasks: value.tasks?.map(i => TT.checkAndParse(i))
     });
 });
 

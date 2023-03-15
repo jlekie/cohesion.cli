@@ -59,34 +59,38 @@ function compiledTypeDef<T extends TSchema>(schema: T): CompiledTypeDef<T> {
         code: () => compiled.Code()
     }
 }
-function parsedTypeDef<T extends TSchema, TOutput = T>(schema: T, transform: (value: Static<T>, selfSchema: T) => TOutput): ParsedTypeDef<T, TOutput> {
+export function parsedTypeDef<T extends TSchema, TOutput = T>(schema: T, transform: (value: Static<T>, selfSchema: ParsedTypeDef<T, TOutput>) => TOutput): ParsedTypeDef<T, TOutput> {
     const SchemaDef = simpleTypeDef(schema);
 
-    return {
+    const typeDef = {
         ...SchemaDef,
-        parse: (value: Static<T>) => transform(value, schema)
-    }
+        parse: (value: Static<T>) => transform(value, typeDef)
+    };
+
+    return typeDef;
 }
-function compiledParsedTypeDef<T extends TSchema, TOutput = T>(schema: T, transform: (value: Static<T>, selfSchema: T) => TOutput): CompiledParsedTypeDef<T, TOutput> {
+export function compiledParsedTypeDef<T extends TSchema, TOutput = T>(schema: T, transform: (value: Static<T>, selfSchema: CompiledParsedTypeDef<T, TOutput>) => TOutput): CompiledParsedTypeDef<T, TOutput> {
     const SchemaDef = compiledTypeDef(schema);
 
-    return {
+    const typeDef = {
         ...SchemaDef,
-        parse: (value: Static<T>) => transform(value, schema),
+        parse: (value: Static<T>) => transform(value, typeDef),
         checkAndParse: (value: unknown) => {
             if (!SchemaDef.check(value))
                 throw new Error('schema validation failure', { cause: SchemaDef.errors(value) });
 
-            return transform(value, schema);
+            return transform(value, typeDef);
         }
-    }
+    };
+
+    return typeDef;
 }
 
 export function typeDef<T extends TSchema>(type: 'simple', schema: T): TypeDef<T>;
 export function typeDef<T extends TSchema>(type: 'compiled', schema: T): CompiledTypeDef<T>;
-export function typeDef<T extends TSchema, TOutput = T>(type: 'parsed', schema: T, transform: (value: Static<T>, selfSchema: T) => TOutput): ParsedTypeDef<T, TOutput>;
-export function typeDef<T extends TSchema, TOutput = T>(type: 'compiledParsed', schema: T, transform: (value: Static<T>, selfSchema: T) => TOutput): CompiledParsedTypeDef<T, TOutput>;
-export function typeDef<T extends TSchema, TOutput = T>(type: 'simple' | 'compiled' | 'parsed' | 'compiledParsed', schema: T, transform?: (value: Static<T>, selfSchema: T) => TOutput) {
+export function typeDef<T extends TSchema, TOutput = T>(type: 'parsed', schema: T, transform: (value: Static<T>, selfSchema: ParsedTypeDef<T, TOutput>) => TOutput): ParsedTypeDef<T, TOutput>;
+export function typeDef<T extends TSchema, TOutput = T>(type: 'compiledParsed', schema: T, transform: (value: Static<T>, selfSchema: CompiledParsedTypeDef<T, TOutput>) => TOutput): CompiledParsedTypeDef<T, TOutput>;
+export function typeDef<T extends TSchema, TOutput = T>(type: 'simple' | 'compiled' | 'parsed' | 'compiledParsed', schema: T, transform?: (value: Static<T>, selfSchema: ParsedTypeDef<T, TOutput> | CompiledParsedTypeDef<T, TOutput>) => TOutput) {
     if (type === 'simple')
         return simpleTypeDef(schema);
     else if (type === 'compiled')
