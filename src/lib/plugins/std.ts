@@ -373,31 +373,20 @@ export default {
             else {
                 const [ protocol, path ] = options.script.uri.split('://', 2);
 
-                let content: string;
+                let uri: string;
                 switch (protocol) {
                     case 'http':
                     case 'https': {
-                        const response = await Axios.get(options.script.uri);
-                        content = response.data;
+                        uri = options.script.uri;
                     } break;
                     case 'file': {
-                        const resolvedPath = Path.resolve(action.parentApp.path ?? '.', path);
-        
-                        content = await FS.readFile(resolvedPath, 'utf8');
+                        uri = Path.resolve(action.parentApp.path ?? '.', path);
                     } break;
                     default:
                         throw new Error(`unsupported config URI [${options.script.uri}]`);
                 }
 
-                await Tmp.file({
-                    postfix: '.ts'
-                }).then(async ({ path, cleanup }) => {
-                    await FS.writeFile(path, content);
-
-                    await execScript(path);
-        
-                    await cleanup();
-                });
+                await execScript(uri);
             }
         });
     }
