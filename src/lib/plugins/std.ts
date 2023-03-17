@@ -116,6 +116,7 @@ export const DenoTypeDef = typeDef('compiledParsed', Type.Object({
         allowFfi: Type.Optional(Type.Boolean()),
         allowRun: Type.Optional(Type.Boolean()),
     }) ])),
+    unstable: Type.Optional(Type.Boolean()),
     script: Type.Union([
         Type.String(),
         Type.Object({
@@ -136,6 +137,7 @@ export const DenoTypeDef = typeDef('compiledParsed', Type.Object({
         allowFfi: value.permissions?.allowFfi ?? false,
         allowRun: value.permissions?.allowRun ?? false,
     },
+    unstable: value.unstable ?? false,
     script: typeof value.script === 'string' ? { inline: value.script } : value.script
 }));
 
@@ -349,6 +351,8 @@ export default {
                     options.permissions.allowFfi && permissionArgs.push('--allow-ffi');
                     options.permissions.allowRun && permissionArgs.push('--allow-run');
                 }
+
+                options.unstable && permissionArgs.push('--unstable');
 
                 await exec(`deno run ${permissionArgs.join(' ')} ${path}`, {
                     cwd: action.parentApp.path,

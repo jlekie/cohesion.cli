@@ -129,7 +129,7 @@ export const TaskTypeDef = compiledParsedTypeDef<typeof TaskType, Task>(TaskType
     return new Task({
         ...value,
         parallel: value.parallel ?? false,
-        actions: value.actions?.map(i => _.isString(i) ? new Action({ type: 'exec' }) : ActionTypeDef.parse(i)),
+        actions: value.actions?.map(i => _.isString(i) ? new Action({ type: 'exec', options: { cmd: i } }) : ActionTypeDef.parse(i)),
         tasks: value.tasks?.map(i => TT.checkAndParse(i))
     });
 });
@@ -153,7 +153,7 @@ export const ConfigTypeDef = typeDef('compiledParsed', Type.Object({
         ...value,
         modules: value.modules ? (_.isArray(value.modules) ? value.modules.map(m => ModuleReferenceTypeDef.parse(m)) : [ ModuleReferenceTypeDef.parse(value.modules) ]) : undefined,
         tasks: value.tasks?.map(i => TaskTypeDef.parse(i)),
-        actions: value.actions?.map(i => _.isString(i) ? new Action({ type: 'exec' }) : ActionTypeDef.parse(i)),
+        actions: value.actions?.map(i => _.isString(i) ? new Action({ type: 'exec', options: { cmd: i } }) : ActionTypeDef.parse(i)),
         variableFiles: value.variableFiles?.map(i => VariableFileReferenceTypeDef.parse(i)),
         labels: value.labels ? _.transform(value.labels, (memo, value, key) => memo[key] = _.isArray(value) ? value : [ value ], {} as Record<string, string[]>) : undefined,
         plugins: value.plugins?.map(i => PluginTypeDef.parse(i))
