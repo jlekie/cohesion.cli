@@ -116,6 +116,7 @@ export const DenoTypeDef = typeDef('compiledParsed', Type.Object({
         allowFfi: Type.Optional(Type.Boolean()),
         allowRun: Type.Optional(Type.Boolean()),
     }) ])),
+    reload: Type.Optional(Type.Boolean()),
     unstable: Type.Optional(Type.Boolean()),
     script: Type.Union([
         Type.String(),
@@ -138,6 +139,7 @@ export const DenoTypeDef = typeDef('compiledParsed', Type.Object({
         allowRun: value.permissions?.allowRun ?? false,
     },
     unstable: value.unstable ?? false,
+    reload: value.reload ?? false,
     script: typeof value.script === 'string' ? { inline: value.script } : value.script
 }));
 
@@ -353,6 +355,8 @@ export default {
                 }
 
                 options.unstable && permissionArgs.push('--unstable');
+
+                options.reload && permissionArgs.push('-r');
 
                 await exec(`deno run ${permissionArgs.join(' ')} ${path}`, {
                     cwd: action.parentApp.path,
