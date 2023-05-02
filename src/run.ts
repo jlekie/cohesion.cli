@@ -4,6 +4,9 @@ import 'source-map-support/register';
 import * as _ from 'lodash';
 import { Builtins, Cli, Command, Option } from 'clipanion';
 import { loadApp, parseArgs, Config } from '.';
+import { EventEmitter } from 'stream';
+
+EventEmitter.defaultMaxListeners = 100;
 
 const [ node, app, ...args ] = process.argv;
 
