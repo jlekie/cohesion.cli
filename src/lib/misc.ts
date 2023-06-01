@@ -22,6 +22,7 @@ export interface ExecOptions {
     echo?: boolean;
     ignoreExitCode?: boolean;
     label?: string;
+    env?: Record<string, string>;
 }
 
 class Test extends Stream.Transform {
@@ -53,17 +54,20 @@ class Test extends Stream.Transform {
     }
 }
 
-export async function exec(cmd: string, { cwd, stdout, dryRun, echo = true, ignoreExitCode = false, label }: ExecOptions = {}) {
+export async function exec(cmd: string, { cwd, stdout, dryRun, echo = true, ignoreExitCode = false, label, env = {} }: ExecOptions = {}) {
     echo && stdout?.write(Chalk.gray(`${label ? label + ' ' : ''}${Chalk.cyan.bold(cmd)} [${Path.resolve(cwd ?? '.')}]\n`));
 
     if (dryRun)
         return;
 
-    const env = cmd.startsWith('yarn')
-        ? _.omit(process.env, 'NODE_OPTIONS', 'INIT_CWD' , 'PROJECT_CWD', 'PWD', 'npm_package_name', 'npm_package_version', 'npm_config_user_agent', 'npm_execpath', 'npm_node_execpath', 'BERRY_BIN_FOLDER')
-        : process.env;
+    const execEnv = {
+        ...cmd.startsWith('yarn')
+            ? _.omit(process.env, 'NODE_OPTIONS', 'INIT_CWD' , 'PROJECT_CWD', 'PWD', 'npm_package_name', 'npm_package_version', 'npm_config_user_agent', 'npm_execpath', 'npm_node_execpath', 'BERRY_BIN_FOLDER')
+            : process.env,
+        ...env
+    };
     // const env = process.env;
-    const proc = ChildProcess.spawn(cmd, { stdio: stdout && label ? [ 'inherit', 'pipe', 'pipe' ] : 'inherit', shell: true, cwd, env: { ...env, 'FORCE_COLOR': '1' } });
+    const proc = ChildProcess.spawn(cmd, { stdio: stdout && label ? [ 'inherit', 'pipe', 'pipe' ] : 'inherit', shell: true, cwd, env: { ...execEnv, 'FORCE_COLOR': '1' } });
     // const proc = ChildProcess.spawn(cmd, { stdio: 'inherit', shell: true, cwd, env });
 
     return new Promise<void>((resolve, reject) => {
@@ -83,14 +87,19 @@ export async function exec(cmd: string, { cwd, stdout, dryRun, echo = true, igno
         throw new Error(`Shell exec failed: ${err}`);
     });
 }
-export async function execCmd(cmd: string, { cwd, stdout, dryRun, echo = true, trim = true, label }: ExecOptions & { trim?: boolean } = {}) {
+export async function execCmd(cmd: string, { cwd, stdout, dryRun, echo = true, trim = true, label, env = {} }: ExecOptions & { trim?: boolean } = {}) {
     echo && stdout?.write(Chalk.gray(`${label ? label + ' ' : ''}${Chalk.cyan(cmd)} [${Path.resolve(cwd ?? '.')}]\n`));
 
     // if (dryRun)
     //     return '';
 
+    const execEnv = {
+        ..._.omit(process.env, 'NODE_OPTIONS', 'INIT_CWD', 'PROJECT_CWD', 'PWD', 'npm_package_name', 'npm_package_version'),
+        ...env
+    };
+
     return new Promise<string>((resolve, reject) => {
-        ChildProcess.exec(cmd, { cwd, env: _.omit(process.env, 'NODE_OPTIONS', 'INIT_CWD', 'PROJECT_CWD', 'PWD', 'npm_package_name', 'npm_package_version')  }, (err, stdout, stderr) => {
+        ChildProcess.exec(cmd, { cwd, env: execEnv  }, (err, stdout, stderr) => {
             if (err) {
                 reject(new Error(`Command "${cmd}" [${cwd}] failed [${err}]`));
                 return;

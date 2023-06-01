@@ -38,15 +38,18 @@ export const ExecTypeDef = typeDef('compiledParsed', Type.Object({
     platforms: Type.Optional(Type.Array(Type.String())),
     commands: Type.Optional(Type.Array(Type.Object({
         platforms: Type.Optional(Type.Array(Type.String())),
-        cmd: Type.String()
-    })))
+        cmd: Type.String(),
+        env: Type.Optional(Type.Record(Type.String(), Type.String()))
+    }))),
+    env: Type.Optional(Type.Record(Type.String(), Type.String()))
 }), value => ({
     requiredVariables: value.requiredVariables ?? [],
     ignoreExitCode: value.ignoreExitCode ?? false,
     commands: [
-        ...(value.cmd ? [ { cmd: value.cmd, platforms: value.platforms } ] : []),
-        ...(value.commands ? value.commands.map(i => ({ cmd: i.cmd, platforms: i.platforms })) : [])
-    ]
+        ...(value.cmd ? [ { cmd: value.cmd, platforms: value.platforms, env: value.env } ] : []),
+        ...(value.commands ? value.commands.map(i => ({ cmd: i.cmd, platforms: i.platforms, env: i.env })) : [])
+    ],
+    // env: value.env ?? {}
 }));
 
 export const LocalDelegateTypeDef = typeDef('compiledParsed', Type.Object({
@@ -93,10 +96,12 @@ export const WatchTypeDef = typeDef('compiledParsed', Type.Object({
 
 export const FSCopyTypeDef = typeDef('compiledParsed', Type.Object({
     source: Type.String(),
-    destination: Type.String()
+    destination: Type.String(),
+    sourceRoot: Type.Optional(Type.String()),
 }), value => ({
     source: value.source,
-    destination: value.destination
+    destination: value.destination,
+    sourceRoot: value.sourceRoot
 }));
 
 export const FSEmptyTypeDef = typeDef('compiledParsed', Type.Object({
@@ -168,7 +173,8 @@ export default {
                     cwd: action.parentApp.path,
                     stdout: process.stdout,
                     ignoreExitCode: options.ignoreExitCode,
-                    label: execParams.label ? '[' + Chalk.hex(colors[colorIdx])(execParams.label) + ']' : undefined
+                    label: execParams.label ? '[' + Chalk.hex(colors[colorIdx])(execParams.label) + ']' : undefined,
+                    env: command.env
                 });
             }
         });
@@ -315,8 +321,38 @@ export default {
         registerAction('fs.copy', async (action, execParams) => {
             const options = FSCopyTypeDef.checkAndParse(action.action.options);
 
-            await FS.copyFile(options.source, options.destination);
-            console.log(`[${Chalk.blue(execParams.label)}] Copied ${options.source} to ${options.destination}`);
+            const vars = {
+                ...await (action.parentTask?.task ?? action.parentApp.config)?.resolveVariables(),
+                ...execParams.vars
+            }
+
+            const source = Path.resolve(_.template(options.source)(vars));
+            const destination = Path.resolve(_.template(options.destination)(vars));
+            const sourceRoot = options.sourceRoot ? Path.resolve(_.template(options.sourceRoot)(vars)) : undefined;
+
+            if (source.indexOf('*') < 0) {
+                await FS.copy(source, destination);
+                console.log(`[${Chalk.blue(execParams.label)}] Copied ${source} to ${destination}`);
+            }
+            else {
+                const sourcePattern = Path.relative(action.parentApp.path ?? '.', source).split(Path.sep).join(Path.posix.sep);
+                const sourceFiles = await Globby(sourcePattern, { cwd: action.parentApp.path, onlyFiles: false });
+
+                if (await FS.pathExists(destination) && !(await FS.stat(destination)).isDirectory())
+                    throw new Error(`invalid destination ${destination}`);
+
+                for (const sourceFile of sourceFiles) {
+                    const resolvedSourcePath = Path.resolve(action.parentApp.path ?? '.', sourceFile);
+                    const resolvedDestinationPath = Path.resolve(destination, sourceRoot ? Path.relative(sourceRoot, resolvedSourcePath) : sourceFile);
+
+                    await FS.copy(resolvedSourcePath, resolvedDestinationPath);
+                    console.log(`[${Chalk.blue(execParams.label)}] Copied ${resolvedSourcePath} to ${resolvedDestinationPath}`);
+                }
+            }
+
+            // await FS.ensureDir
+            // await FS.copyFile(source, destination);
+            // console.log(`[${Chalk.blue(execParams.label)}] Copied ${source} to ${destination}`);
         });
 
         registerAction('fs.empty', async (action, execParams) => {
@@ -326,9 +362,9 @@ export default {
                 ...await (action.parentTask?.task ?? action.parentApp.config)?.resolveVariables(),
                 ...execParams.vars
             }
-    
+
             const path = Path.resolve(action.parentApp.path ?? '.', _.template(options.path)(vars));
-    
+
             await FS.emptyDir(path);
             console.log(`[${Chalk.blue(execParams.label)}] Emptied ${path}`);
         });

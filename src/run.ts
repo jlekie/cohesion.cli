@@ -5,6 +5,8 @@ import * as _ from 'lodash';
 import { Builtins, Cli, Command, Option } from 'clipanion';
 import { loadApp, parseArgs, Config } from '.';
 import { EventEmitter } from 'stream';
+import * as Path from 'path';
+import * as FS from 'fs-extra';
 
 EventEmitter.defaultMaxListeners = 100;
 
@@ -69,10 +71,11 @@ class DefaultCommand extends Command {
     }
 }
 
+const packageManifest = FS.readJsonSync(Path.resolve(__dirname, '../package.json'));
 const cli = new Cli({
-    binaryName: '[ cohesion, co ]',
+    binaryName: `[ ${Object.keys(packageManifest.bin)} ]`,
     binaryLabel: 'Cohesion',
-    binaryVersion: '2.0.0-alpha.0'
+    binaryVersion: packageManifest.version
 });
 
 cli.register(ViewCommand);
