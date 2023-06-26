@@ -11,7 +11,7 @@ import * as Tmp from 'tmp-promise';
 import Axios from 'axios';
 import * as Yaml from 'js-yaml';
 
-import { Type } from '@sinclair/typebox';
+import { Type } from '@jlekie/fluent-typebox';
 import { typeDef } from '../types';
 
 import { ActionTypeDef, Action as ConfigAction } from '../config.types';

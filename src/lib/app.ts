@@ -3,10 +3,11 @@ import * as Bluebird from 'bluebird';
 import * as Stream from 'stream';
 import * as Globby from 'globby';
 
-import * as Types from './types';
+// import * as Types from './types';
 import * as Config from './config.types';
 import { loadPlugin } from './plugin';
 import StdPlugin from './plugins/std';
+import NodePlugin from './plugins/nodejs';
 
 import * as OS from 'os';
 import { exec } from './misc';
@@ -98,6 +99,7 @@ export async function loadApp(config: Config.Config) {
     const app = new App({ config });
 
     StdPlugin.registerActions({}, app.registerAction.bind(app));
+    NodePlugin.registerActions({}, app.registerAction.bind(app));
     await app.init();
     // app.registerAction('exec', (action, params) => ExecAction.parse(action.action.options).exec(action, params));
 
