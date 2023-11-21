@@ -148,6 +148,20 @@ export const DenoTypeDef = typeDef('compiledParsed', Type.Object({
     script: typeof value.script === 'string' ? { inline: value.script } : value.script
 }));
 
+export const TypescriptTypeDef = typeDef('compiledParsed', Type.Object({
+    script: Type.Union([
+        Type.String(),
+        Type.Object({
+            inline: Type.String()
+        }),
+        Type.Object({
+            uri: Type.String()
+        })
+    ])
+}), value => ({
+    script: typeof value.script === 'string' ? { inline: value.script } : value.script
+}));
+
 export default {
     registerActions: (options, registerAction) => {
         registerAction('exec', async (action, execParams) => {
@@ -383,7 +397,7 @@ export default {
                     options.permissions.allowEnv && permissionArgs.push('--allow-env');
                     options.permissions.allowRead && permissionArgs.push('--allow-read');
                     options.permissions.allowWrite && permissionArgs.push('--allow-write');
-                    options.permissions.allowSys && permissionArgs.push('--allow-allowSys');
+                    options.permissions.allowSys && permissionArgs.push('--allow-sys');
                     options.permissions.allowHrTime && permissionArgs.push('--allow-hrtime');
                     options.permissions.allowNet && permissionArgs.push('--allow-net');
                     options.permissions.allowFfi && permissionArgs.push('--allow-ffi');
@@ -433,5 +447,49 @@ export default {
                 await execScript(uri);
             }
         });
+
+        // registerAction('typescript', async (action, execParams) => {
+        //     const options = TypescriptTypeDef.checkAndParse(action.action.options);
+
+        //     const execScript = async (path: string) => {
+        //         await exec(`deno run ${permissionArgs.join(' ')} ${path}`, {
+        //             cwd: action.parentApp.path,
+        //             stdout: process.stdout,
+        //             label: execParams.label ? '[' + Chalk.hex(colors[colorIdx])(execParams.label) + ']' : undefined
+        //         });
+        //     }
+
+        //     if ('inline' in options.script) {
+        //         const script = options.script.inline;
+
+        //         await Tmp.file({
+        //             postfix: '.ts'
+        //         }).then(async ({ path, cleanup }) => {
+        //             await FS.writeFile(path, script);
+
+        //             await execScript(path);
+
+        //             await cleanup();
+        //         });
+        //     }
+        //     else {
+        //         const [ protocol, path ] = options.script.uri.split('://', 2);
+
+        //         let uri: string;
+        //         switch (protocol) {
+        //             case 'http':
+        //             case 'https': {
+        //                 uri = options.script.uri;
+        //             } break;
+        //             case 'file': {
+        //                 uri = Path.resolve(action.parentApp.path ?? '.', path);
+        //             } break;
+        //             default:
+        //                 throw new Error(`unsupported config URI [${options.script.uri}]`);
+        //         }
+
+        //         await execScript(uri);
+        //     }
+        // });
     }
 } satisfies typeof PluginTypeDef.StaticType;
